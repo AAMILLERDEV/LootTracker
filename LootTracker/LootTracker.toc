@@ -2,7 +2,7 @@
 ## Title: LootTracker
 ## Notes: Tracks loot you collect from NPCs and gathering nodes, grouped by source with vendor values.
 ## Author: aajmiller12
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariablesPerCharacter: LootTrackerDB
 
 Core.lua

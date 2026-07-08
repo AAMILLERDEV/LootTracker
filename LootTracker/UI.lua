@@ -5,6 +5,10 @@ local _, LT = ...
 local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 ---@diagnostic disable-next-line: deprecated
 local GetCoinTextureString = (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString) or GetCoinTextureString
+---@diagnostic disable-next-line: deprecated
+local GetItemIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
+
+local FALLBACK_ICON = 134400 -- INV_Misc_QuestionMark
 
 local ROW_HEIGHT = 16
 local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
@@ -84,18 +88,36 @@ scrollFrame:SetScript("OnSizeChanged", function(_, width)
     content:SetWidth(width)
 end)
 
+local Refresh            -- defined below; needed by row/button click handlers
+local collapseAllButton  -- created below; label is updated inside Refresh
+
+-- Rows are buttons so group headers can be clicked to collapse/expand.
+-- A header row carries its DB record in row.record; item rows leave it
+-- nil and have mouse input disabled.
 local rows = {}
 local function AcquireRow(index)
     local row = rows[index]
     if not row then
-        row = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row = CreateFrame("Button", nil, content)
+        row:SetHeight(ROW_HEIGHT)
         local offsetY = -(index - 1) * ROW_HEIGHT
         row:SetPoint("TOPLEFT", 0, offsetY)
         row:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, offsetY)
-        row:SetJustifyH("LEFT")
-        row:SetWordWrap(false)
+        row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.text:SetAllPoints()
+        row.text:SetJustifyH("LEFT")
+        row.text:SetWordWrap(false)
+        row:SetScript("OnClick", function(self)
+            if self.record then
+                self.record.collapsed = not self.record.collapsed
+                Refresh()
+            end
+        end)
         rows[index] = row
     end
+    row.record = nil
+    row:EnableMouse(false)
     row:Show()
     return row
 end
@@ -153,34 +175,76 @@ local function SourceLabel(record)
     return name
 end
 
-local function Refresh()
+function Refresh()
     local groups = BuildGroups()
     local rowIndex, grandTotal = 0, 0
+    local anyExpanded = false
 
     for _, group in ipairs(groups) do
+        local record = group.record
         grandTotal = grandTotal + group.total
+        if not record.collapsed then
+            anyExpanded = true
+        end
+
         rowIndex = rowIndex + 1
-        AcquireRow(rowIndex):SetText(("|cffffd100%s|r  x%d looted — %s"):format(
-            SourceLabel(group.record), group.record.loots, GetCoinTextureString(group.total)))
-        for _, item in ipairs(group.items) do
-            rowIndex = rowIndex + 1
-            AcquireRow(rowIndex):SetText(("      %s x%d — %s"):format(
-                ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value)))
+        local header = AcquireRow(rowIndex)
+        local indicator = record.collapsed
+            and "|TInterface\\Buttons\\UI-PlusButton-Up:16|t"
+            or "|TInterface\\Buttons\\UI-MinusButton-Up:16|t"
+        header.text:SetText(("%s |cffffd100%s|r  x%d looted — %s"):format(
+            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.total)))
+        header.record = record
+        header:EnableMouse(true)
+
+        if not record.collapsed then
+            for _, item in ipairs(group.items) do
+                rowIndex = rowIndex + 1
+                local icon = GetItemIcon(item.itemID) or FALLBACK_ICON
+                AcquireRow(rowIndex).text:SetText(("    |T%d:14|t %s x%d — %s"):format(
+                    icon, ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value)))
+            end
         end
     end
 
     if rowIndex == 0 then
         rowIndex = 1
-        AcquireRow(1):SetText("Nothing tracked yet. Go loot something!")
+        AcquireRow(1).text:SetText("Nothing tracked yet. Go loot something!")
     end
 
     for i = rowIndex + 1, #rows do
         rows[i]:Hide()
     end
 
+    if collapseAllButton then
+        collapseAllButton:SetText(anyExpanded and "Collapse All" or "Expand All")
+        collapseAllButton:SetShown(#groups > 0)
+    end
+
     content:SetHeight(rowIndex * ROW_HEIGHT)
     totalText:SetText("Total: " .. GetCoinTextureString(grandTotal))
 end
+
+collapseAllButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+collapseAllButton:SetSize(100, 20)
+collapseAllButton:SetPoint("TOPLEFT", 12, -13)
+collapseAllButton:SetText("Collapse All")
+collapseAllButton:Hide()
+collapseAllButton:SetScript("OnClick", function()
+    local sources = LT.GetSources and LT.GetSources()
+    if not sources then return end
+    local collapse = false
+    for _, record in pairs(sources) do
+        if not record.collapsed then
+            collapse = true
+            break
+        end
+    end
+    for _, record in pairs(sources) do
+        record.collapsed = collapse
+    end
+    Refresh()
+end)
 
 local refreshQueued = false
 function LT.RefreshUI()
