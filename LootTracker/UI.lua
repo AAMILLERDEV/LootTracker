@@ -12,7 +12,7 @@ local FALLBACK_ICON = 134400 -- INV_Misc_QuestionMark
 
 local ROW_HEIGHT = 16
 local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
-local MIN_WIDTH, MIN_HEIGHT = 300, 240
+local MIN_WIDTH, MIN_HEIGHT = 240, 240
 
 local SaveLayout -- defined below; captured by drag/resize handlers
 
@@ -60,8 +60,10 @@ frame:Hide()
 
 tinsert(UISpecialFrames, "LootTrackerFrame")
 
+-- Sits below the Collapse All / close button row so it never overlaps
+-- them at narrow widths.
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOP", 0, -16)
+title:SetPoint("TOP", 0, -38)
 title:SetText("LootTracker")
 
 local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -105,7 +107,7 @@ local totalText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 totalText:SetPoint("BOTTOMRIGHT", -20, 18)
 
 local scrollFrame = CreateFrame("ScrollFrame", "LootTrackerScrollFrame", frame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", 16, -42)
+scrollFrame:SetPoint("TOPLEFT", 16, -60)
 scrollFrame:SetPoint("BOTTOMRIGHT", -36, 44)
 
 local content = CreateFrame("Frame", nil, scrollFrame)
@@ -171,7 +173,8 @@ local function BuildGroups()
     if not sources then return groups end
 
     for _, record in pairs(sources) do
-        local items, total = {}, 0
+        local items, copper = {}, record.copper or 0
+        local total = copper
         for itemID, count in pairs(record.items) do
             local value = ItemSellPrice(itemID) * count
             total = total + value
@@ -181,7 +184,7 @@ local function BuildGroups()
             if a.value ~= b.value then return a.value > b.value end
             return a.itemID < b.itemID
         end)
-        groups[#groups + 1] = { record = record, items = items, total = total }
+        groups[#groups + 1] = { record = record, items = items, copper = copper, total = total }
     end
 
     sort(groups, function(a, b)
@@ -225,6 +228,12 @@ function Refresh()
         header:EnableMouse(true)
 
         if not record.collapsed then
+            if group.copper > 0 then
+                rowIndex = rowIndex + 1
+                AcquireRow(rowIndex).text:SetText(
+                    "    |TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — "
+                    .. GetCoinTextureString(group.copper))
+            end
             for _, item in ipairs(group.items) do
                 rowIndex = rowIndex + 1
                 local icon = GetItemIcon(item.itemID) or FALLBACK_ICON
@@ -317,6 +326,32 @@ launcherIcon:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
 launcherIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 launcher:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
+-- Pinning removes the frame from UISpecialFrames so Esc no longer
+-- closes it; CloseSpecialWindows re-reads the list on every press.
+local function IsPinned()
+    local ui = LootTrackerDB and LootTrackerDB.ui
+    return (ui and ui.pinned) or false
+end
+
+local function SetPinned(pinned)
+    local ui = LootTrackerDB and LootTrackerDB.ui
+    if ui then
+        ui.pinned = pinned or nil
+    end
+    local index
+    for i, name in ipairs(UISpecialFrames) do
+        if name == "LootTrackerFrame" then
+            index = i
+            break
+        end
+    end
+    if pinned and index then
+        tremove(UISpecialFrames, index)
+    elseif not pinned and not index then
+        tinsert(UISpecialFrames, "LootTrackerFrame")
+    end
+end
+
 local function ResetWindowSize()
     frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
     SaveLayout()
@@ -328,11 +363,26 @@ local function ResetWindowPosition()
     SaveLayout()
 end
 
+-- Rendered as a plain button (not a menu checkbox) so it left-aligns
+-- with the other entries; the checkmark is appended to the label instead.
+local function PinnedLabel()
+    local label = "Pin window (ignore Esc)"
+    if IsPinned() then
+        label = label .. " |TInterface\\Buttons\\UI-CheckBox-Check:14|t"
+    end
+    return label
+end
+
+local function TogglePinned()
+    SetPinned(not IsPinned())
+end
+
 local launcherMenu -- fallback dropdown host, created on demand
 local function OpenLauncherMenu(owner)
     if MenuUtil and MenuUtil.CreateContextMenu then
         MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
             rootDescription:CreateTitle("LootTracker")
+            rootDescription:CreateButton(PinnedLabel(), TogglePinned)
             rootDescription:CreateButton("Reset window size", ResetWindowSize)
             rootDescription:CreateButton("Reset window position", ResetWindowPosition)
         end)
@@ -342,6 +392,7 @@ local function OpenLauncherMenu(owner)
         end
         EasyMenu({
             { text = "LootTracker", isTitle = true, notCheckable = true },
+            { text = PinnedLabel(), notCheckable = true, func = TogglePinned },
             { text = "Reset window size", notCheckable = true, func = ResetWindowSize },
             { text = "Reset window position", notCheckable = true, func = ResetWindowPosition },
         }, launcherMenu, "cursor", 0, 0, "MENU")
@@ -400,6 +451,9 @@ function LT.ApplyLayout()
     if ui.btnPoint then
         launcher:ClearAllPoints()
         launcher:SetPoint(ui.btnPoint, UIParent, ui.btnRelPoint or ui.btnPoint, ui.btnX or 0, ui.btnY or 0)
+    end
+    if ui.pinned then
+        SetPinned(true)
     end
 end
 

@@ -96,6 +96,7 @@ read_globals = {
     "C_Timer", "C_Map", "C_QuestLog", "C_ChatInfo", "C_CreatureInfo",
     "C_Item", "C_CurrencyInfo", "YES", "NO", "MenuUtil",
     "Enum", "CreateColor", "Mixin", "CopyTable",
+    "GOLD_AMOUNT", "SILVER_AMOUNT", "COPPER_AMOUNT",
     "RAID_CLASS_COLORS", "CUSTOM_CLASS_COLORS", "FACTION_BAR_COLORS",
     "ITEM_QUALITY_COLORS", "NORMAL_FONT_COLOR", "HIGHLIGHT_FONT_COLOR",
     "RED_FONT_COLOR", "GREEN_FONT_COLOR", "ERR_NOT_IN_COMBAT",

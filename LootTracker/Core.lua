@@ -1,6 +1,21 @@
 local ADDON_NAME, LT = ...
 
 local LOOT_TYPE_ITEM = (Enum and Enum.LootSlotType and Enum.LootSlotType.Item) or 1
+local LOOT_TYPE_MONEY = (Enum and Enum.LootSlotType and Enum.LootSlotType.Money) or 2
+
+-- Coin loot slots expose their amount only as localized text ("1 Silver,
+-- 23 Copper"); build capture patterns from the client's own format strings.
+local GOLD_PATTERN = GOLD_AMOUNT and GOLD_AMOUNT:gsub("%%d", "(%%d+)") or "(%d+) Gold"
+local SILVER_PATTERN = SILVER_AMOUNT and SILVER_AMOUNT:gsub("%%d", "(%%d+)") or "(%d+) Silver"
+local COPPER_PATTERN = COPPER_AMOUNT and COPPER_AMOUNT:gsub("%%d", "(%%d+)") or "(%d+) Copper"
+
+local function CoinTextToCopper(text)
+    if not text then return 0 end
+    local gold = tonumber(text:match(GOLD_PATTERN)) or 0
+    local silver = tonumber(text:match(SILVER_PATTERN)) or 0
+    local copper = tonumber(text:match(COPPER_PATTERN)) or 0
+    return gold * 10000 + silver * 100 + copper
+end
 
 -- Only trust the last gathering cast target as a node name for this long.
 local OBJECT_NAME_WINDOW = 15
@@ -63,28 +78,48 @@ local function GetSourceRecord(kind, id)
     return record
 end
 
+-- Returns guid1, qty1, guid2, qty2, ... — with area loot a single slot
+-- can come from several corpses. For money slots the quantities are
+-- copper amounts.
+local function CollectSlotSources(slot, fallbackQuantity)
+    local sources, quantitySum = {}, 0
+    local info = { GetLootSourceInfo(slot) }
+    for i = 1, #info, 2 do
+        if ParseGUID(info[i]) then
+            local quantity = info[i + 1] or 0
+            quantitySum = quantitySum + quantity
+            sources[#sources + 1] = { guid = info[i], quantity = quantity }
+        end
+    end
+    -- If the API reported no per-source quantities, credit the whole
+    -- amount to the first source rather than losing it.
+    if quantitySum == 0 and sources[1] then
+        sources[1].quantity = fallbackQuantity
+    end
+    return sources
+end
+
 local function SnapshotLoot()
     wipe(pending)
     for slot = 1, GetNumLootItems() do
-        if GetLootSlotType(slot) == LOOT_TYPE_ITEM then
+        local slotType = GetLootSlotType(slot)
+        if slotType == LOOT_TYPE_ITEM then
             local link = GetLootSlotLink(slot)
             local itemID = link and tonumber(link:match("item:(%d+)"))
             local _, _, quantity = GetLootSlotInfo(slot)
             if itemID and quantity and quantity > 0 then
-                local sources = {}
-                -- Returns guid1, qty1, guid2, qty2, ... — with area loot a
-                -- single slot can come from several corpses.
-                local info = { GetLootSourceInfo(slot) }
-                for i = 1, #info, 2 do
-                    if ParseGUID(info[i]) then
-                        sources[#sources + 1] = {
-                            guid = info[i],
-                            quantity = info[i + 1] or quantity,
-                        }
-                    end
-                end
+                local sources = CollectSlotSources(slot, quantity)
                 if #sources > 0 then
                     pending[slot] = { itemID = itemID, sources = sources }
+                end
+            end
+        elseif slotType == LOOT_TYPE_MONEY then
+            local _, coinText = GetLootSlotInfo(slot)
+            local copper = CoinTextToCopper(coinText)
+            if copper > 0 then
+                local sources = CollectSlotSources(slot, copper)
+                if #sources > 0 then
+                    pending[slot] = { money = true, sources = sources }
                 end
             end
         end
@@ -103,7 +138,11 @@ local function RecordSlot(slot)
         local kind, id = ParseGUID(source.guid)
         if kind then
             local record = GetSourceRecord(kind, id)
-            record.items[entry.itemID] = (record.items[entry.itemID] or 0) + source.quantity
+            if entry.money then
+                record.copper = (record.copper or 0) + source.quantity
+            else
+                record.items[entry.itemID] = (record.items[entry.itemID] or 0) + source.quantity
+            end
             if not seenGUIDs[source.guid] then
                 seenGUIDs[source.guid] = true
                 record.loots = record.loots + 1

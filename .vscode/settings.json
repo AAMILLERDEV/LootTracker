@@ -24,6 +24,9 @@
         "NO",
         "StaticPopup_Show",
         "ITEM_QUALITY_COLORS",
-        "EasyMenu"
+        "EasyMenu",
+        "GOLD_AMOUNT",
+        "SILVER_AMOUNT",
+        "COPPER_AMOUNT"
     ]
 }
