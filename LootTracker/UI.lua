@@ -1,0 +1,295 @@
+local _, LT = ...
+
+-- Modern-namespace versions with fallbacks for older classic clients
+---@diagnostic disable-next-line: deprecated
+local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+---@diagnostic disable-next-line: deprecated
+local GetCoinTextureString = (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString) or GetCoinTextureString
+
+local ROW_HEIGHT = 16
+local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
+local MIN_WIDTH, MIN_HEIGHT = 300, 240
+
+local SaveLayout -- defined below; captured by drag/resize handlers
+
+local frame = CreateFrame("Frame", "LootTrackerFrame", UIParent, "BackdropTemplate")
+frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
+frame:SetPoint("CENTER")
+frame:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 32,
+    insets = { left = 8, right = 8, top = 8, bottom = 8 },
+})
+frame:SetMovable(true)
+frame:SetResizable(true)
+if frame.SetResizeBounds then
+    frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT)
+else
+    frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
+end
+frame:EnableMouse(true)
+frame:RegisterForDrag("LeftButton")
+frame:SetScript("OnDragStart", frame.StartMoving)
+frame:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    SaveLayout()
+end)
+frame:SetClampedToScreen(true)
+frame:SetFrameStrata("MEDIUM")
+frame:Hide()
+
+tinsert(UISpecialFrames, "LootTrackerFrame")
+
+local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+title:SetPoint("TOP", 0, -16)
+title:SetText("LootTracker")
+
+local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+closeButton:SetPoint("TOPRIGHT", -6, -6)
+
+local sizeGrip = CreateFrame("Button", nil, frame)
+sizeGrip:SetSize(16, 16)
+sizeGrip:SetPoint("BOTTOMRIGHT", -8, 8)
+sizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+sizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+sizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+sizeGrip:SetScript("OnMouseDown", function()
+    frame:StartSizing("BOTTOMRIGHT")
+end)
+sizeGrip:SetScript("OnMouseUp", function()
+    frame:StopMovingOrSizing()
+    SaveLayout()
+end)
+
+local resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+resetButton:SetSize(80, 22)
+resetButton:SetPoint("BOTTOMLEFT", 16, 14)
+resetButton:SetText("Reset")
+resetButton:SetScript("OnClick", function()
+    StaticPopup_Show("LOOTTRACKER_RESET")
+end)
+
+local totalText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+totalText:SetPoint("BOTTOMRIGHT", -20, 18)
+
+local scrollFrame = CreateFrame("ScrollFrame", "LootTrackerScrollFrame", frame, "UIPanelScrollFrameTemplate")
+scrollFrame:SetPoint("TOPLEFT", 16, -42)
+scrollFrame:SetPoint("BOTTOMRIGHT", -36, 44)
+
+local content = CreateFrame("Frame", nil, scrollFrame)
+content:SetSize(FRAME_WIDTH - 52, 1)
+scrollFrame:SetScrollChild(content)
+scrollFrame:SetScript("OnSizeChanged", function(_, width)
+    content:SetWidth(width)
+end)
+
+local rows = {}
+local function AcquireRow(index)
+    local row = rows[index]
+    if not row then
+        row = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local offsetY = -(index - 1) * ROW_HEIGHT
+        row:SetPoint("TOPLEFT", 0, offsetY)
+        row:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, offsetY)
+        row:SetJustifyH("LEFT")
+        row:SetWordWrap(false)
+        rows[index] = row
+    end
+    row:Show()
+    return row
+end
+
+local function ColoredItemName(itemID)
+    local name, _, quality = GetItemInfo(itemID)
+    if not name then
+        return "item:" .. itemID -- uncached; a refresh fires once the server responds
+    end
+    local color = ITEM_QUALITY_COLORS[quality or 1]
+    return (color and color.hex or "|cffffffff") .. name .. "|r"
+end
+
+local function ItemSellPrice(itemID)
+    local sellPrice = select(11, GetItemInfo(itemID))
+    return sellPrice or 0
+end
+
+-- Turn the DB into a sorted display list: sources by total vendor value,
+-- items within a source likewise.
+local function BuildGroups()
+    local groups = {}
+    local sources = LT.GetSources and LT.GetSources()
+    if not sources then return groups end
+
+    for _, record in pairs(sources) do
+        local items, total = {}, 0
+        for itemID, count in pairs(record.items) do
+            local value = ItemSellPrice(itemID) * count
+            total = total + value
+            items[#items + 1] = { itemID = itemID, count = count, value = value }
+        end
+        sort(items, function(a, b)
+            if a.value ~= b.value then return a.value > b.value end
+            return a.itemID < b.itemID
+        end)
+        groups[#groups + 1] = { record = record, items = items, total = total }
+    end
+
+    sort(groups, function(a, b)
+        if a.total ~= b.total then return a.total > b.total end
+        return (a.record.name or "") < (b.record.name or "")
+    end)
+    return groups
+end
+
+local function SourceLabel(record)
+    local name = record.name
+    if not name then
+        name = (record.kind == "node" and "Object #" or "NPC #") .. record.id
+    end
+    if record.kind == "node" then
+        name = name .. " |cff80c0ff(node)|r"
+    end
+    return name
+end
+
+local function Refresh()
+    local groups = BuildGroups()
+    local rowIndex, grandTotal = 0, 0
+
+    for _, group in ipairs(groups) do
+        grandTotal = grandTotal + group.total
+        rowIndex = rowIndex + 1
+        AcquireRow(rowIndex):SetText(("|cffffd100%s|r  x%d looted — %s"):format(
+            SourceLabel(group.record), group.record.loots, GetCoinTextureString(group.total)))
+        for _, item in ipairs(group.items) do
+            rowIndex = rowIndex + 1
+            AcquireRow(rowIndex):SetText(("      %s x%d — %s"):format(
+                ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value)))
+        end
+    end
+
+    if rowIndex == 0 then
+        rowIndex = 1
+        AcquireRow(1):SetText("Nothing tracked yet. Go loot something!")
+    end
+
+    for i = rowIndex + 1, #rows do
+        rows[i]:Hide()
+    end
+
+    content:SetHeight(rowIndex * ROW_HEIGHT)
+    totalText:SetText("Total: " .. GetCoinTextureString(grandTotal))
+end
+
+local refreshQueued = false
+function LT.RefreshUI()
+    if refreshQueued or not frame:IsShown() then return end
+    refreshQueued = true
+    C_Timer.After(0.1, function()
+        refreshQueued = false
+        if frame:IsShown() then
+            Refresh()
+        end
+    end)
+end
+
+frame:SetScript("OnShow", Refresh)
+
+-- Uncached items resolve asynchronously; redraw when their data arrives.
+local infoWatcher = CreateFrame("Frame")
+infoWatcher:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+infoWatcher:SetScript("OnEvent", function()
+    LT.RefreshUI()
+end)
+
+local function ToggleWindow()
+    if frame:IsShown() then
+        frame:Hide()
+    else
+        frame:Show()
+    end
+end
+
+-- Floating bag-icon launcher; drag to reposition, click to toggle.
+local launcher = CreateFrame("Button", "LootTrackerLauncher", UIParent)
+launcher:SetSize(32, 32)
+launcher:SetPoint("CENTER", UIParent, "CENTER", 0, 260)
+launcher:SetMovable(true)
+launcher:SetClampedToScreen(true)
+launcher:SetFrameStrata("MEDIUM")
+launcher:RegisterForDrag("LeftButton")
+
+local launcherIcon = launcher:CreateTexture(nil, "ARTWORK")
+launcherIcon:SetAllPoints()
+launcherIcon:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
+launcherIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+launcher:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+
+launcher:SetScript("OnClick", ToggleWindow)
+launcher:SetScript("OnDragStart", launcher.StartMoving)
+launcher:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    SaveLayout()
+end)
+launcher:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("LootTracker")
+    GameTooltip:AddLine("Click to toggle the loot window.", 1, 1, 1)
+    GameTooltip:AddLine("Drag to move this button.", 1, 1, 1)
+    GameTooltip:Show()
+end)
+launcher:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
+
+function SaveLayout()
+    local ui = LootTrackerDB and LootTrackerDB.ui
+    if not ui then return end
+    local point, _, relPoint, x, y = frame:GetPoint()
+    ui.point, ui.relPoint, ui.x, ui.y = point, relPoint, x, y
+    ui.width, ui.height = frame:GetWidth(), frame:GetHeight()
+    local bPoint, _, bRelPoint, bx, by = launcher:GetPoint()
+    ui.btnPoint, ui.btnRelPoint, ui.btnX, ui.btnY = bPoint, bRelPoint, bx, by
+end
+
+-- Called from Core once saved variables are available.
+function LT.ApplyLayout()
+    local ui = LootTrackerDB and LootTrackerDB.ui
+    if not ui then return end
+    if ui.point then
+        frame:ClearAllPoints()
+        frame:SetPoint(ui.point, UIParent, ui.relPoint or ui.point, ui.x or 0, ui.y or 0)
+    end
+    if ui.width and ui.height then
+        frame:SetSize(math.max(ui.width, MIN_WIDTH), math.max(ui.height, MIN_HEIGHT))
+    end
+    if ui.btnPoint then
+        launcher:ClearAllPoints()
+        launcher:SetPoint(ui.btnPoint, UIParent, ui.btnRelPoint or ui.btnPoint, ui.btnX or 0, ui.btnY or 0)
+    end
+end
+
+StaticPopupDialogs["LOOTTRACKER_RESET"] = {
+    text = "Reset all LootTracker data?",
+    button1 = YES,
+    button2 = NO,
+    OnAccept = function()
+        LT.ResetData()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+SLASH_LOOTTRACKER1 = "/loottracker"
+SLASH_LOOTTRACKER2 = "/lt"
+SlashCmdList.LOOTTRACKER = function(msg)
+    msg = strlower(strtrim(msg or ""))
+    if msg == "reset" then
+        StaticPopup_Show("LOOTTRACKER_RESET")
+    else
+        ToggleWindow()
+    end
+end
