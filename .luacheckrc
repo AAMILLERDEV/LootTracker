@@ -94,7 +94,7 @@ read_globals = {
 
     -- Constants / mixins / namespaces
     "C_Timer", "C_Map", "C_QuestLog", "C_ChatInfo", "C_CreatureInfo",
-    "C_Item", "C_CurrencyInfo", "YES", "NO",
+    "C_Item", "C_CurrencyInfo", "YES", "NO", "MenuUtil",
     "Enum", "CreateColor", "Mixin", "CopyTable",
     "RAID_CLASS_COLORS", "CUSTOM_CLASS_COLORS", "FACTION_BAR_COLORS",
     "ITEM_QUALITY_COLORS", "NORMAL_FONT_COLOR", "HIGHLIGHT_FONT_COLOR",

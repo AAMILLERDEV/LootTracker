@@ -317,7 +317,45 @@ launcherIcon:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
 launcherIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 launcher:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
-launcher:SetScript("OnClick", ToggleWindow)
+local function ResetWindowSize()
+    frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
+    SaveLayout()
+end
+
+local function ResetWindowPosition()
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    SaveLayout()
+end
+
+local launcherMenu -- fallback dropdown host, created on demand
+local function OpenLauncherMenu(owner)
+    if MenuUtil and MenuUtil.CreateContextMenu then
+        MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
+            rootDescription:CreateTitle("LootTracker")
+            rootDescription:CreateButton("Reset window size", ResetWindowSize)
+            rootDescription:CreateButton("Reset window position", ResetWindowPosition)
+        end)
+    elseif EasyMenu then
+        if not launcherMenu then
+            launcherMenu = CreateFrame("Frame", "LootTrackerLauncherMenu", UIParent, "UIDropDownMenuTemplate")
+        end
+        EasyMenu({
+            { text = "LootTracker", isTitle = true, notCheckable = true },
+            { text = "Reset window size", notCheckable = true, func = ResetWindowSize },
+            { text = "Reset window position", notCheckable = true, func = ResetWindowPosition },
+        }, launcherMenu, "cursor", 0, 0, "MENU")
+    end
+end
+
+launcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+launcher:SetScript("OnClick", function(self, button)
+    if button == "RightButton" then
+        OpenLauncherMenu(self)
+    else
+        ToggleWindow()
+    end
+end)
 launcher:SetScript("OnDragStart", launcher.StartMoving)
 launcher:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
@@ -327,6 +365,7 @@ launcher:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine("LootTracker")
     GameTooltip:AddLine("Click to toggle the loot window.", 1, 1, 1)
+    GameTooltip:AddLine("Right-click for options.", 1, 1, 1)
     GameTooltip:AddLine("Drag to move this button.", 1, 1, 1)
     GameTooltip:Show()
 end)
