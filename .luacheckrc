@@ -39,7 +39,7 @@ read_globals = {
     "GetAddOnMetadata", "IsAddOnLoaded", "LoadAddOn", "InterfaceOptions_AddCategory",
     "ReloadUI", "PlaySound", "PlaySoundFile", "GetCursorPosition",
     "InCombatLockdown", "IsLoggedIn", "IsShiftKeyDown", "IsControlKeyDown",
-    "IsAltKeyDown", "IsModifierKeyDown",
+    "IsAltKeyDown", "IsModifierKeyDown", "IsMouseButtonDown",
 
     -- Frames / UI
     "CreateFrame", "UIParent", "WorldFrame", "GameTooltip", "GameFontNormal",

@@ -27,11 +27,26 @@ frame:SetBackdrop({
 })
 frame:SetMovable(true)
 frame:SetResizable(true)
-if frame.SetResizeBounds then
-    frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT)
-else
-    frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
+
+-- Cap the window at roughly half the screen (60% x 80% ≈ half the area).
+local function MaxFrameSize()
+    return UIParent:GetWidth() * 0.6, UIParent:GetHeight() * 0.8
 end
+
+local function UpdateResizeBounds()
+    local maxW, maxH = MaxFrameSize()
+    if frame.SetResizeBounds then
+        frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, maxW, maxH)
+    else
+        frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
+        frame:SetMaxResize(maxW, maxH)
+    end
+end
+UpdateResizeBounds()
+frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+frame:RegisterEvent("UI_SCALE_CHANGED")
+frame:SetScript("OnEvent", UpdateResizeBounds)
+
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
 frame:SetScript("OnDragStart", frame.StartMoving)
@@ -58,13 +73,25 @@ sizeGrip:SetPoint("BOTTOMRIGHT", -8, 8)
 sizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
 sizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 sizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-sizeGrip:SetScript("OnMouseDown", function()
-    frame:StartSizing("BOTTOMRIGHT")
-end)
-sizeGrip:SetScript("OnMouseUp", function()
+local function StopSizing()
     frame:StopMovingOrSizing()
+    sizeGrip:SetScript("OnUpdate", nil)
     SaveLayout()
+end
+
+sizeGrip:SetScript("OnMouseDown", function(self)
+    frame:StartSizing("BOTTOMRIGHT")
+    -- Sizing must end when the mouse button does, even if the release
+    -- lands off the grip (easy after overshooting a size bound). If it
+    -- didn't, the frame would keep resizing toward the cursor and "jump"
+    -- on the next click anywhere in the UI.
+    self:SetScript("OnUpdate", function()
+        if not IsMouseButtonDown("LeftButton") then
+            StopSizing()
+        end
+    end)
 end)
+sizeGrip:SetScript("OnMouseUp", StopSizing)
 
 local resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 resetButton:SetSize(80, 22)
@@ -326,7 +353,10 @@ function LT.ApplyLayout()
         frame:SetPoint(ui.point, UIParent, ui.relPoint or ui.point, ui.x or 0, ui.y or 0)
     end
     if ui.width and ui.height then
-        frame:SetSize(math.max(ui.width, MIN_WIDTH), math.max(ui.height, MIN_HEIGHT))
+        local maxW, maxH = MaxFrameSize()
+        frame:SetSize(
+            math.min(math.max(ui.width, MIN_WIDTH), maxW),
+            math.min(math.max(ui.height, MIN_HEIGHT), maxH))
     end
     if ui.btnPoint then
         launcher:ClearAllPoints()
