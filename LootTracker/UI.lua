@@ -12,7 +12,7 @@ local FALLBACK_ICON = 134400 -- INV_Misc_QuestionMark
 
 local ROW_HEIGHT = 16
 local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
-local MIN_WIDTH, MIN_HEIGHT = 240, 240
+local MIN_WIDTH, MIN_HEIGHT = 260, 270
 
 local SaveLayout -- defined below; captured by drag/resize handlers
 
@@ -60,10 +60,10 @@ frame:Hide()
 
 tinsert(UISpecialFrames, "LootTrackerFrame")
 
--- Sits below the Collapse All / close button row so it never overlaps
--- them at narrow widths.
+-- Shares the top row with the close button, above the Collapse All /
+-- view toggle row.
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOP", 0, -38)
+title:SetPoint("TOP", 0, -16)
 title:SetText("LootTracker")
 
 local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -107,7 +107,7 @@ local totalText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 totalText:SetPoint("BOTTOMRIGHT", -20, 18)
 
 local scrollFrame = CreateFrame("ScrollFrame", "LootTrackerScrollFrame", frame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", 16, -60)
+scrollFrame:SetPoint("TOPLEFT", 16, -66)
 scrollFrame:SetPoint("BOTTOMRIGHT", -36, 44)
 
 local content = CreateFrame("Frame", nil, scrollFrame)
@@ -119,6 +119,8 @@ end)
 
 local Refresh            -- defined below; needed by row/button click handlers
 local collapseAllButton  -- created below; label is updated inside Refresh
+local viewToggleButton   -- created below; label is updated inside Refresh
+local viewMode = "grouped" -- "grouped" or "timeline"; persisted in ui.viewMode
 
 -- Rows are buttons so group headers can be clicked to collapse/expand.
 -- A header row carries its DB record in row.record; item rows leave it
@@ -205,14 +207,13 @@ local function SourceLabel(record)
     return name
 end
 
-function Refresh()
-    local groups = BuildGroups()
-    local rowIndex, grandTotal = 0, 0
+-- Renders the "grouped by source" view; returns the row count used.
+local function RenderGrouped(groups)
+    local rowIndex = 0
     local anyExpanded = false
 
     for _, group in ipairs(groups) do
         local record = group.record
-        grandTotal = grandTotal + group.total
         if not record.collapsed then
             anyExpanded = true
         end
@@ -243,27 +244,91 @@ function Refresh()
         end
     end
 
+    if collapseAllButton then
+        collapseAllButton:SetText(anyExpanded and "Collapse All" or "Expand All")
+        collapseAllButton:SetShown(#groups > 0)
+    end
+    return rowIndex
+end
+
+-- Renders the flat chronological log, newest entry first; returns the
+-- row count used. Names resolve live from the current source records,
+-- so a name learned after the fact (see Core's CacheNpcName) shows up
+-- correctly even for older log entries.
+local function RenderTimeline()
+    if collapseAllButton then
+        collapseAllButton:Hide()
+    end
+
+    local log = LT.GetLog and LT.GetLog()
+    local sources = LT.GetSources and LT.GetSources()
+    if not log then return 0 end
+
+    local rowIndex = 0
+    for i = #log, 1, -1 do
+        local entry = log[i]
+        local record = sources and sources[entry.kind .. ":" .. entry.id]
+        local label = SourceLabel(record or { kind = entry.kind, id = entry.id })
+        local timeText = "|cff808080" .. date("%H:%M:%S", entry.time) .. "|r"
+
+        rowIndex = rowIndex + 1
+        local row = AcquireRow(rowIndex)
+        if entry.copper then
+            row.text:SetText(("%s  |TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s  |cff808080from|r %s"):format(
+                timeText, GetCoinTextureString(entry.copper), label))
+        else
+            local icon = GetItemIcon(entry.itemID) or FALLBACK_ICON
+            local value = ItemSellPrice(entry.itemID) * entry.count
+            row.text:SetText(("%s  |T%d:14|t %s x%d — %s  |cff808080from|r %s"):format(
+                timeText, icon, ColoredItemName(entry.itemID), entry.count, GetCoinTextureString(value), label))
+        end
+    end
+    return rowIndex
+end
+
+function Refresh()
+    if viewToggleButton then
+        viewToggleButton:SetText(viewMode == "timeline" and "Grouped View" or "Timeline View")
+        viewToggleButton:ClearAllPoints()
+        if viewMode == "timeline" then
+            -- Collapse All is hidden in this view; center the toggle
+            -- alone on the row instead of leaving it offset to one side.
+            viewToggleButton:SetPoint("TOP", frame, "TOP", 0, -42)
+        else
+            viewToggleButton:SetPoint("TOPLEFT", collapseAllButton, "TOPRIGHT", 6, 0)
+        end
+    end
+
+    local groups = BuildGroups()
+    local grandTotal = 0
+    for _, group in ipairs(groups) do
+        grandTotal = grandTotal + group.total
+    end
+
+    local rowIndex = (viewMode == "timeline") and RenderTimeline() or RenderGrouped(groups)
+
     if rowIndex == 0 then
         rowIndex = 1
-        AcquireRow(1).text:SetText("Nothing tracked yet. Go loot something!")
+        AcquireRow(1).text:SetText(viewMode == "timeline"
+            and "Nothing logged yet. Go loot something!"
+            or "Nothing tracked yet. Go loot something!")
     end
 
     for i = rowIndex + 1, #rows do
         rows[i]:Hide()
     end
 
-    if collapseAllButton then
-        collapseAllButton:SetText(anyExpanded and "Collapse All" or "Expand All")
-        collapseAllButton:SetShown(#groups > 0)
-    end
-
     content:SetHeight(rowIndex * ROW_HEIGHT)
     totalText:SetText("Total: " .. GetCoinTextureString(grandTotal))
 end
 
+-- Collapse All + view toggle share their own row, centered on the frame
+-- (anchored from "TOP", which is top-CENTER, so this stays centered at
+-- any window width) below the close button's row so widening either
+-- button never risks overlapping it.
 collapseAllButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 collapseAllButton:SetSize(100, 20)
-collapseAllButton:SetPoint("TOPLEFT", 12, -13)
+collapseAllButton:SetPoint("TOPLEFT", frame, "TOP", -118, -42)
 collapseAllButton:SetText("Collapse All")
 collapseAllButton:Hide()
 collapseAllButton:SetScript("OnClick", function()
@@ -279,6 +344,15 @@ collapseAllButton:SetScript("OnClick", function()
     for _, record in pairs(sources) do
         record.collapsed = collapse
     end
+    Refresh()
+end)
+
+viewToggleButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+viewToggleButton:SetSize(130, 20)
+viewToggleButton:SetPoint("TOPLEFT", collapseAllButton, "TOPRIGHT", 6, 0)
+viewToggleButton:SetScript("OnClick", function()
+    viewMode = (viewMode == "timeline") and "grouped" or "timeline"
+    SaveLayout()
     Refresh()
 end)
 
@@ -432,6 +506,7 @@ function SaveLayout()
     ui.width, ui.height = frame:GetWidth(), frame:GetHeight()
     local bPoint, _, bRelPoint, bx, by = launcher:GetPoint()
     ui.btnPoint, ui.btnRelPoint, ui.btnX, ui.btnY = bPoint, bRelPoint, bx, by
+    ui.viewMode = viewMode
 end
 
 -- Called from Core once saved variables are available.
@@ -454,6 +529,9 @@ function LT.ApplyLayout()
     end
     if ui.pinned then
         SetPinned(true)
+    end
+    if ui.viewMode == "timeline" or ui.viewMode == "grouped" then
+        viewMode = ui.viewMode
     end
 end
 
