@@ -9,7 +9,8 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 - **Groups your loot by source.** Every mob you kill and loot gets its own entry, with all its drops stacked together — kill 40 kobolds and you'll see one "Kobold Miner" group with everything they dropped, how many times you've looted them, and its own item icons.
 - **Tracks gathering too.** Mining veins, herbs, and chests get their own `(node)` entries, so you can see what that hour of ore farming actually produced.
 - **Shows coin drops.** Money looted from mobs appears as a **Currency** line inside each group.
-- **Adds it all up.** Every item shows its vendor sell value, every group shows its combined worth, and the bottom of the window shows the grand total for your session. (Vendor prices only — no auction house estimates.)
+- **Adds it all up.** Every group shows its combined worth, and the bottom of the window shows the grand total for your session — using the AH price where one's known and falling back to the vendor price otherwise, plus any coin looted, so it's the best single estimate of what a session was actually worth.
+- **Auction house values, if you have Auctionator.** With [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, every item can also show its raw AH price alongside its vendor price (both are optional columns — see Options below). No Auctionator? LootTracker works exactly the same, just without that column, and the grand total quietly falls back to vendor pricing.
 - **Two ways to browse.** Switch between a **grouped** view (loot stacked by source) and a **timeline** view (a chronological, newest-first log of every pickup) with one click.
 - **Counts only *your* loot.** If a party member picks something up, it doesn't get counted. Only what actually enters your bags is tracked.
 - **Resize and reposition freely.** The window and the launcher button both remember where you left them, per character.
@@ -32,19 +33,25 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 | Collapse or expand the whole list | Click **Collapse All** / **Expand All** at the top |
 | See loot in the order you picked it up | Click **Timeline View** at the top |
 | Go back to loot grouped by source | Click **Grouped View** at the top |
-| Start fresh | Click **Reset** (bottom left) or type `/lt reset` |
+| Start fresh | Type `/lt reset`, or use **Reset all data** in the options menu |
+| Open the options menu | Click the gear icon (top left), or right-click the bag icon |
+| See a breakdown of the total | Hover over **Total** at the bottom of the window |
 | Move the window or bag icon | Drag it anywhere with the left mouse button |
 | Make the window bigger or smaller | Drag the grip in the bottom-right corner |
 
 The list sorts itself by value, so your most profitable targets are always at the top.
 
-### Bag icon options
+### Options
 
-Right-click the bag icon for extras:
+Click the gear icon in the top-left of the window, or right-click the bag icon — both open the same menu:
 
 - **Pin window (ignore Esc)** — normally the Esc key closes the tracker like any other window. Pin it and it stays open (handy while farming).
 - **Reset window size** — snaps the window back to its original size.
 - **Reset window position** — brings the window back to the center of the screen, in case it wanders off somewhere unhelpful.
+- **Show vendor value** — show or hide the raw vendor sell-price breakdown alongside the main total.
+- **Show AH value** — show or hide the raw Auctionator price breakdown alongside the main total.
+- **Show date/time** — toggle the timestamp shown on each entry in Timeline View.
+- **Reset all data** — wipes everything LootTracker has recorded, after confirming.
 
 ## Good to know
 

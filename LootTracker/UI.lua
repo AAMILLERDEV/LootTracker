@@ -7,6 +7,10 @@ local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 local GetCoinTextureString = (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString) or GetCoinTextureString
 ---@diagnostic disable-next-line: deprecated
 local GetItemIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
+---@diagnostic disable-next-line: deprecated
+local IsAddOnLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+
+local AH_COLOR = "|cff80c0ff"
 
 local FALLBACK_ICON = 134400 -- INV_Misc_QuestionMark
 
@@ -14,7 +18,18 @@ local ROW_HEIGHT = 16
 local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
 local MIN_WIDTH, MIN_HEIGHT = 260, 270
 
-local SaveLayout -- defined below; captured by drag/resize handlers
+local SaveLayout          -- defined below; captured by drag/resize handlers
+local Refresh             -- defined below; needed by row/button click handlers
+local collapseAllButton   -- created below; label is updated inside Refresh
+local viewToggleButton    -- created below; label is updated inside Refresh
+local viewMode = "grouped" -- "grouped" or "timeline"; persisted in ui.viewMode
+local showVendor = true    -- persisted in ui.showVendor
+local showAH = true        -- persisted in ui.showAH
+local showDateTime = true  -- persisted in ui.showDateTime; timeline view only
+
+-- Grand-total breakdown from the last Refresh(), read by totalHitbox's
+-- tooltip (built lazily on hover instead of recomputed every refresh).
+local lastVendorTotal, lastAhTotal, lastItemCount, lastAhShown = 0, 0, 0, false
 
 local frame = CreateFrame("Frame", "LootTrackerFrame", UIParent, "BackdropTemplate")
 frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
@@ -69,20 +84,60 @@ title:SetText("LootTracker")
 local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
 closeButton:SetPoint("TOPRIGHT", -6, -6)
 
+-- Mirrors the close button on the opposite corner; opens the same menu
+-- as right-clicking the launcher icon (see OpenOptionsMenu below).
+local optionsButton = CreateFrame("Button", nil, frame)
+optionsButton:SetSize(20, 20)
+optionsButton:SetPoint("TOPLEFT", 14, -14)
+optionsButton:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+optionsButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+optionsButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("LootTracker Options")
+    GameTooltip:Show()
+end)
+optionsButton:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
+
 local sizeGrip = CreateFrame("Button", nil, frame)
 sizeGrip:SetSize(16, 16)
 sizeGrip:SetPoint("BOTTOMRIGHT", -8, 8)
 sizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
 sizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 sizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+
+-- StartSizing tracks the cursor live, so calling it immediately on
+-- mouse-down makes the window visibly wobble with the small, involuntary
+-- cursor movement of an ordinary click (mouse-down and mouse-up are
+-- essentially never at the exact same pixel). Wait for the cursor to
+-- clear a small threshold before starting the resize at all, so a plain
+-- click never moves the window, not even momentarily.
+local CLICK_DRAG_THRESHOLD = 3 -- screen pixels
+local dragStartX, dragStartY
+local sizing = false
+
 local function StopSizing()
-    frame:StopMovingOrSizing()
+    if sizing then
+        frame:StopMovingOrSizing()
+        sizing = false
+        SaveLayout()
+    end
     sizeGrip:SetScript("OnUpdate", nil)
-    SaveLayout()
+    dragStartX, dragStartY = nil, nil
 end
 
 sizeGrip:SetScript("OnMouseDown", function(self)
-    frame:StartSizing("BOTTOMRIGHT")
+    -- Defensively close out any resize left dangling from a previous
+    -- cycle before starting a new one. StartSizing keeps tracking the
+    -- cursor until something calls StopMovingOrSizing — it isn't tied to
+    -- the mouse button — so if that ever failed to run (e.g. the window
+    -- got hidden mid-drag), the frame stays silently latched onto the
+    -- cursor and only visibly "jumps" once the cursor moves again.
+    -- StopMovingOrSizing is a harmless no-op if nothing was in progress.
+    frame:StopMovingOrSizing()
+    sizing = false
+    dragStartX, dragStartY = GetCursorPosition()
     -- Sizing must end when the mouse button does, even if the release
     -- lands off the grip (easy after overshooting a size bound). If it
     -- didn't, the frame would keep resizing toward the cursor and "jump"
@@ -90,21 +145,54 @@ sizeGrip:SetScript("OnMouseDown", function(self)
     self:SetScript("OnUpdate", function()
         if not IsMouseButtonDown("LeftButton") then
             StopSizing()
+            return
+        end
+        if not sizing then
+            local cursorX, cursorY = GetCursorPosition()
+            if abs(cursorX - dragStartX) > CLICK_DRAG_THRESHOLD or abs(cursorY - dragStartY) > CLICK_DRAG_THRESHOLD then
+                sizing = true
+                frame:StartSizing("BOTTOMRIGHT")
+            end
         end
     end)
 end)
 sizeGrip:SetScript("OnMouseUp", StopSizing)
+-- If the window closes mid-resize (Esc, toggling it off, etc.) with the
+-- mouse still down, sizeGrip's OnUpdate stops firing along with it (a
+-- hidden frame's OnUpdate doesn't run), so StopSizing would otherwise
+-- never get called and the resize is left dangling — see above.
+frame:HookScript("OnHide", StopSizing)
 
-local resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-resetButton:SetSize(80, 22)
-resetButton:SetPoint("BOTTOMLEFT", 16, 14)
-resetButton:SetText("Reset")
-resetButton:SetScript("OnClick", function()
-    StaticPopup_Show("LOOTTRACKER_RESET")
-end)
-
+-- Just "Total: X" at a glance; the vendor/AH breakdown (when those
+-- toggles are on) lives in a tooltip instead of inline, so this stays
+-- short regardless of window width. See totalHitbox below.
 local totalText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-totalText:SetPoint("BOTTOMRIGHT", -20, 18)
+totalText:SetPoint("BOTTOM", 0, 18)
+
+local totalHitbox = CreateFrame("Frame", nil, frame)
+totalHitbox:SetAllPoints(totalText)
+totalHitbox:EnableMouse(true)
+totalHitbox:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Session Total")
+    local addedLine = false
+    if showVendor then
+        GameTooltip:AddDoubleLine("Vendor value", GetCoinTextureString(lastVendorTotal), 1, 1, 1, 1, 1, 1)
+        addedLine = true
+    end
+    if lastAhShown then
+        local known = lastItemCount == 0 or lastAhTotal > 0
+        GameTooltip:AddDoubleLine("AH value", known and GetCoinTextureString(lastAhTotal) or "—", 1, 1, 1, 1, 1, 1)
+        addedLine = true
+    end
+    if not addedLine then
+        GameTooltip:AddLine("Enable vendor/AH value in Options for a breakdown.", 0.5, 0.5, 0.5, true)
+    end
+    GameTooltip:Show()
+end)
+totalHitbox:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
 
 local scrollFrame = CreateFrame("ScrollFrame", "LootTrackerScrollFrame", frame, "UIPanelScrollFrameTemplate")
 scrollFrame:SetPoint("TOPLEFT", 16, -66)
@@ -116,11 +204,6 @@ scrollFrame:SetScrollChild(content)
 scrollFrame:SetScript("OnSizeChanged", function(_, width)
     content:SetWidth(width)
 end)
-
-local Refresh            -- defined below; needed by row/button click handlers
-local collapseAllButton  -- created below; label is updated inside Refresh
-local viewToggleButton   -- created below; label is updated inside Refresh
-local viewMode = "grouped" -- "grouped" or "timeline"; persisted in ui.viewMode
 
 -- Rows are buttons so group headers can be clicked to collapse/expand.
 -- A header row carries its DB record in row.record; item rows leave it
@@ -168,8 +251,20 @@ local function ItemSellPrice(itemID)
     return sellPrice or 0
 end
 
--- Turn the DB into a sorted display list: sources by total vendor value,
--- items within a source likewise.
+-- nil means "Auctionator has no price for this item", not zero.
+local function ItemAuctionValue(itemID, count)
+    local unitPrice = LT.GetAuctionValue and LT.GetAuctionValue(itemID)
+    return unitPrice and (unitPrice * count) or nil
+end
+
+-- Turn the DB into a sorted display list: sources by total value, items
+-- within a source likewise. Currency is never folded into vendorTotal or
+-- ahTotal (those are pure per-item sums, for the raw "Show vendor/AH
+-- value" breakdowns) — it only feeds valueTotal, LootTracker's best
+-- estimate of what a source is actually worth: AH price per item where
+-- Auctionator has one, vendor price as the fallback, plus currency.
+-- itemCount lets the renderer tell "nothing sold on the AH yet"
+-- (itemCount > 0, ahTotal == 0) apart from "no items at all".
 local function BuildGroups()
     local groups = {}
     local sources = LT.GetSources and LT.GetSources()
@@ -177,21 +272,35 @@ local function BuildGroups()
 
     for _, record in pairs(sources) do
         local items, copper = {}, record.copper or 0
-        local total = copper
+        local vendorTotal, ahTotal, valueTotal, itemCount = 0, 0, copper, 0
         for itemID, count in pairs(record.items) do
             local value = ItemSellPrice(itemID) * count
-            total = total + value
-            items[#items + 1] = { itemID = itemID, count = count, value = value }
+            local auctionValue = ItemAuctionValue(itemID, count)
+            local bestValue = auctionValue or value
+            vendorTotal = vendorTotal + value
+            valueTotal = valueTotal + bestValue
+            itemCount = itemCount + 1
+            if auctionValue then
+                ahTotal = ahTotal + auctionValue
+            end
+            items[#items + 1] = {
+                itemID = itemID, count = count, value = value,
+                auctionValue = auctionValue, bestValue = bestValue,
+            }
         end
         sort(items, function(a, b)
-            if a.value ~= b.value then return a.value > b.value end
+            if a.bestValue ~= b.bestValue then return a.bestValue > b.bestValue end
             return a.itemID < b.itemID
         end)
-        groups[#groups + 1] = { record = record, items = items, copper = copper, total = total }
+        groups[#groups + 1] = {
+            record = record, items = items, copper = copper,
+            vendorTotal = vendorTotal, ahTotal = ahTotal,
+            valueTotal = valueTotal, itemCount = itemCount,
+        }
     end
 
     sort(groups, function(a, b)
-        if a.total ~= b.total then return a.total > b.total end
+        if a.valueTotal ~= b.valueTotal then return a.valueTotal > b.valueTotal end
         return (a.record.name or "") < (b.record.name or "")
     end)
     return groups
@@ -212,6 +321,7 @@ end
 local function RenderGrouped(groups)
     local rowIndex = 0
     local anyExpanded = false
+    local ahShown = showAH and IsAddOnLoaded("Auctionator")
 
     for _, group in ipairs(groups) do
         local record = group.record
@@ -224,8 +334,17 @@ local function RenderGrouped(groups)
         local indicator = record.collapsed
             and "|TInterface\\Buttons\\UI-PlusButton-Up:16|t"
             or "|TInterface\\Buttons\\UI-MinusButton-Up:16|t"
-        header.text:SetText(("%s |cffffd100%s|r  x%d looted — %s"):format(
-            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.total)))
+        local headerText = ("%s |cffffd100%s|r  x%d looted — %s"):format(
+            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.valueTotal))
+        if showVendor then
+            headerText = headerText .. ("  |cff808080Vendor:|r %s"):format(GetCoinTextureString(group.vendorTotal))
+        end
+        if ahShown then
+            local known = group.itemCount == 0 or group.ahTotal > 0
+            headerText = headerText .. ("  %sAH: %s|r"):format(
+                AH_COLOR, known and GetCoinTextureString(group.ahTotal) or "—")
+        end
+        header.text:SetText(headerText)
         header.record = record
         header:EnableMouse(true)
 
@@ -239,8 +358,15 @@ local function RenderGrouped(groups)
             for _, item in ipairs(group.items) do
                 rowIndex = rowIndex + 1
                 local icon = GetItemIcon(item.itemID) or FALLBACK_ICON
-                AcquireRow(rowIndex).text:SetText(("    |T%d:14|t %s x%d — %s"):format(
-                    icon, ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value)))
+                local itemText = ("    |T%d:14|t %s x%d"):format(
+                    icon, ColoredItemName(item.itemID), item.count)
+                if showVendor then
+                    itemText = itemText .. " — " .. GetCoinTextureString(item.value)
+                end
+                if ahShown and item.auctionValue then
+                    itemText = itemText .. ("  %sAH: %s|r"):format(AH_COLOR, GetCoinTextureString(item.auctionValue))
+                end
+                AcquireRow(rowIndex).text:SetText(itemText)
             end
         end
     end
@@ -271,23 +397,43 @@ local function RenderTimeline()
     local sources = LT.GetSources and LT.GetSources()
     if not log then return 0 end
 
+    local ahShown = showAH and IsAddOnLoaded("Auctionator")
     local rowIndex = 0
     for i = #log, 1, -1 do
         local entry = log[i]
         local record = sources and sources[entry.kind .. ":" .. entry.id]
         local label = SourceLabel(record or { kind = entry.kind, id = entry.id })
-        local timeText = "|cff808080" .. date("%H:%M:%S", entry.time) .. "|r"
+
+        -- Source name gets its own row (with the timestamp, if shown)
+        -- above the item/currency row, instead of a "from X" suffix
+        -- tacked onto the end — keeps the detail row from stretching
+        -- wide with a long item name plus a long source name.
+        rowIndex = rowIndex + 1
+        local headerText = ("|cffffd100%s|r"):format(label)
+        if showDateTime then
+            headerText = ("|cff808080%s|r  %s"):format(date("%H:%M:%S", entry.time), headerText)
+        end
+        AcquireRow(rowIndex).text:SetText(headerText)
 
         rowIndex = rowIndex + 1
         local row = AcquireRow(rowIndex)
         if entry.copper then
-            row.text:SetText(("%s  |TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s  |cff808080from|r %s"):format(
-                timeText, GetCoinTextureString(entry.copper), label))
+            row.text:SetText(("    |TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s"):format(
+                GetCoinTextureString(entry.copper)))
         else
             local icon = GetItemIcon(entry.itemID) or FALLBACK_ICON
-            local value = ItemSellPrice(entry.itemID) * entry.count
-            row.text:SetText(("%s  |T%d:14|t %s x%d — %s  |cff808080from|r %s"):format(
-                timeText, icon, ColoredItemName(entry.itemID), entry.count, GetCoinTextureString(value), label))
+            local text = ("    |T%d:14|t %s x%d"):format(icon, ColoredItemName(entry.itemID), entry.count)
+            if showVendor then
+                local value = ItemSellPrice(entry.itemID) * entry.count
+                text = text .. " — " .. GetCoinTextureString(value)
+            end
+            if ahShown then
+                local auctionValue = ItemAuctionValue(entry.itemID, entry.count)
+                if auctionValue then
+                    text = text .. ("  %sAH: %s|r"):format(AH_COLOR, GetCoinTextureString(auctionValue))
+                end
+            end
+            row.text:SetText(text)
         end
     end
     return rowIndex
@@ -307,9 +453,12 @@ function Refresh()
     end
 
     local groups = BuildGroups()
-    local grandTotal = 0
+    local grandVendorTotal, grandAhTotal, grandValueTotal, grandItemCount = 0, 0, 0, 0
     for _, group in ipairs(groups) do
-        grandTotal = grandTotal + group.total
+        grandVendorTotal = grandVendorTotal + group.vendorTotal
+        grandAhTotal = grandAhTotal + group.ahTotal
+        grandValueTotal = grandValueTotal + group.valueTotal
+        grandItemCount = grandItemCount + group.itemCount
     end
 
     local rowIndex = (viewMode == "timeline") and RenderTimeline() or RenderGrouped(groups)
@@ -328,7 +477,9 @@ function Refresh()
     end
 
     content:SetHeight(rowIndex * ROW_HEIGHT)
-    totalText:SetText("Total: " .. GetCoinTextureString(grandTotal))
+    lastVendorTotal, lastAhTotal, lastItemCount = grandVendorTotal, grandAhTotal, grandItemCount
+    lastAhShown = showAH and IsAddOnLoaded("Auctionator")
+    totalText:SetText("Total: " .. GetCoinTextureString(grandValueTotal))
 end
 
 -- Collapse All + view toggle share their own row, centered on the frame
@@ -445,46 +596,85 @@ local function ResetWindowPosition()
     SaveLayout()
 end
 
--- Rendered as a plain button (not a menu checkbox) so it left-aligns
--- with the other entries; the checkmark is appended to the label instead.
-local function PinnedLabel()
-    local label = "Pin window (ignore Esc)"
-    if IsPinned() then
+-- Rendered as plain buttons (not menu checkboxes) so every entry
+-- left-aligns identically; the checkmark is appended to the label instead.
+local function CheckableLabel(label, checked)
+    if checked then
         label = label .. " |TInterface\\Buttons\\UI-CheckBox-Check:14|t"
     end
     return label
+end
+
+local function PinnedLabel()
+    return CheckableLabel("Pin window (ignore Esc)", IsPinned())
 end
 
 local function TogglePinned()
     SetPinned(not IsPinned())
 end
 
-local launcherMenu -- fallback dropdown host, created on demand
-local function OpenLauncherMenu(owner)
+local function ToggleShowVendor()
+    showVendor = not showVendor
+    SaveLayout()
+    Refresh()
+end
+
+local function ToggleShowAH()
+    showAH = not showAH
+    SaveLayout()
+    Refresh()
+end
+
+local function ToggleShowDateTime()
+    showDateTime = not showDateTime
+    SaveLayout()
+    Refresh()
+end
+
+-- Shared by the launcher icon's right-click menu and the in-window
+-- options button, so both stay in sync with a single definition.
+local optionsMenu -- fallback dropdown host, created on demand
+local function OpenOptionsMenu(owner)
     if MenuUtil and MenuUtil.CreateContextMenu then
         MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
             rootDescription:CreateTitle("LootTracker")
             rootDescription:CreateButton(PinnedLabel(), TogglePinned)
             rootDescription:CreateButton("Reset window size", ResetWindowSize)
             rootDescription:CreateButton("Reset window position", ResetWindowPosition)
+            rootDescription:CreateButton(CheckableLabel("Show vendor value", showVendor), ToggleShowVendor)
+            rootDescription:CreateButton(CheckableLabel("Show AH value", showAH), ToggleShowAH)
+            rootDescription:CreateButton(CheckableLabel("Show date/time", showDateTime), ToggleShowDateTime)
+            rootDescription:CreateButton("Reset all data", function()
+                StaticPopup_Show("LOOTTRACKER_RESET")
+            end)
         end)
     elseif EasyMenu then
-        if not launcherMenu then
-            launcherMenu = CreateFrame("Frame", "LootTrackerLauncherMenu", UIParent, "UIDropDownMenuTemplate")
+        if not optionsMenu then
+            optionsMenu = CreateFrame("Frame", "LootTrackerOptionsMenu", UIParent, "UIDropDownMenuTemplate")
         end
         EasyMenu({
             { text = "LootTracker", isTitle = true, notCheckable = true },
             { text = PinnedLabel(), notCheckable = true, func = TogglePinned },
             { text = "Reset window size", notCheckable = true, func = ResetWindowSize },
             { text = "Reset window position", notCheckable = true, func = ResetWindowPosition },
-        }, launcherMenu, "cursor", 0, 0, "MENU")
+            { text = CheckableLabel("Show vendor value", showVendor), notCheckable = true, func = ToggleShowVendor },
+            { text = CheckableLabel("Show AH value", showAH), notCheckable = true, func = ToggleShowAH },
+            { text = CheckableLabel("Show date/time", showDateTime), notCheckable = true, func = ToggleShowDateTime },
+            { text = "Reset all data", notCheckable = true, func = function()
+                StaticPopup_Show("LOOTTRACKER_RESET")
+            end },
+        }, optionsMenu, "cursor", 0, 0, "MENU")
     end
 end
+
+optionsButton:SetScript("OnClick", function(self)
+    OpenOptionsMenu(self)
+end)
 
 launcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 launcher:SetScript("OnClick", function(self, button)
     if button == "RightButton" then
-        OpenLauncherMenu(self)
+        OpenOptionsMenu(self)
     else
         ToggleWindow()
     end
@@ -515,6 +705,9 @@ function SaveLayout()
     local bPoint, _, bRelPoint, bx, by = launcher:GetPoint()
     ui.btnPoint, ui.btnRelPoint, ui.btnX, ui.btnY = bPoint, bRelPoint, bx, by
     ui.viewMode = viewMode
+    ui.showVendor = showVendor
+    ui.showAH = showAH
+    ui.showDateTime = showDateTime
 end
 
 -- Called from Core once saved variables are available.
@@ -541,6 +734,9 @@ function LT.ApplyLayout()
     if ui.viewMode == "timeline" or ui.viewMode == "grouped" then
         viewMode = ui.viewMode
     end
+    if ui.showVendor ~= nil then showVendor = ui.showVendor end
+    if ui.showAH ~= nil then showAH = ui.showAH end
+    if ui.showDateTime ~= nil then showDateTime = ui.showDateTime end
 end
 
 StaticPopupDialogs["LOOTTRACKER_RESET"] = {

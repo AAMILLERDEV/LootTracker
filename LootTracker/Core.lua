@@ -49,11 +49,12 @@ AddLootPattern(LOOT_ITEM_SELF)
 -- Only trust the last gathering cast target as a node name for this long.
 local OBJECT_NAME_WINDOW = 15
 
--- Temporary diagnostics for the "loot sometimes goes untracked" report.
+-- Diagnostics for the "loot sometimes goes untracked" class of report.
 -- Prints only at the exact points where a loot event could vanish
 -- silently, so a repro tells us which path is actually firing instead
--- of guessing. Safe to remove once the cause is confirmed.
-local DEBUG = true
+-- of guessing. Off by default for release; flip to true (or expose a
+-- /lt debug toggle) when chasing a report like that.
+local DEBUG = false
 local function Debug(msg)
     if DEBUG then
         print("|cff33ff99LootTracker debug:|r " .. msg)
@@ -387,6 +388,26 @@ local function OnLootMessage(message)
             return
         end
     end
+end
+
+---@diagnostic disable-next-line: deprecated
+local IsAddOnLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+
+-- Reads the current buyout price from Auctionator via its published API
+-- (Auctionator/Source/API/v1/GetAuctionPrice.lua) instead of its internal
+-- AUCTIONATOR_PRICE_DATABASE saved-variable table, so this keeps working
+-- even if Auctionator's internal storage format changes. Returns nil
+-- whenever Auctionator isn't installed/loaded, or has no data for
+-- itemID — callers must treat nil as "unknown", not zero.
+function LT.GetAuctionValue(itemID)
+    if not itemID or not IsAddOnLoaded("Auctionator") then return nil end
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if not api or not api.GetAuctionPriceByItemID then return nil end
+    local ok, price = pcall(api.GetAuctionPriceByItemID, ADDON_NAME, itemID)
+    if ok and type(price) == "number" then
+        return price
+    end
+    return nil
 end
 
 function LT.GetSources()
