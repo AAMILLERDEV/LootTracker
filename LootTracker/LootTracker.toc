@@ -2,6 +2,7 @@
 ## Title: LootTracker
 ## Notes: Tracks loot you collect from NPCs and gathering nodes, grouped by source with vendor values.
 ## Author: aajmiller12
+## IconTexture: Interface\AddOns\LootTracker\Media\LootTracker-icon.png
 ## Version: 0.7.4-debug
 ## SavedVariablesPerCharacter: LootTrackerDB
 

@@ -149,6 +149,7 @@ local function AcquireRow(index)
     end
     row.record = nil
     row:EnableMouse(false)
+    row.text:SetJustifyH("LEFT")
     row:Show()
     return row
 end
@@ -245,8 +246,14 @@ local function RenderGrouped(groups)
     end
 
     if collapseAllButton then
-        collapseAllButton:SetText(anyExpanded and "Collapse All" or "Expand All")
-        collapseAllButton:SetShown(#groups > 0)
+        collapseAllButton:Show()
+        if #groups > 0 then
+            collapseAllButton:Enable()
+            collapseAllButton:SetText(anyExpanded and "Collapse All" or "Expand All")
+        else
+            collapseAllButton:Disable()
+            collapseAllButton:SetText("Collapse All")
+        end
     end
     return rowIndex
 end
@@ -309,7 +316,9 @@ function Refresh()
 
     if rowIndex == 0 then
         rowIndex = 1
-        AcquireRow(1).text:SetText(viewMode == "timeline"
+        local emptyRow = AcquireRow(1)
+        emptyRow.text:SetJustifyH("CENTER")
+        emptyRow.text:SetText(viewMode == "timeline"
             and "Nothing logged yet. Go loot something!"
             or "Nothing tracked yet. Go loot something!")
     end
@@ -396,8 +405,7 @@ launcher:RegisterForDrag("LeftButton")
 
 local launcherIcon = launcher:CreateTexture(nil, "ARTWORK")
 launcherIcon:SetAllPoints()
-launcherIcon:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
-launcherIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+launcherIcon:SetTexture("Interface\\AddOns\\LootTracker\\Media\\LootTracker-icon.png")
 launcher:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
 -- Pinning removes the frame from UISpecialFrames so Esc no longer
