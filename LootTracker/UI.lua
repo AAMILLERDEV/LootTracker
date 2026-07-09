@@ -95,14 +95,29 @@ sizeGrip:SetPoint("BOTTOMRIGHT", -8, 8)
 sizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
 sizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 sizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+
+-- StartSizing tracks the cursor live, so calling it immediately on
+-- mouse-down makes the window visibly wobble with the small, involuntary
+-- cursor movement of an ordinary click (mouse-down and mouse-up are
+-- essentially never at the exact same pixel). Wait for the cursor to
+-- clear a small threshold before starting the resize at all, so a plain
+-- click never moves the window, not even momentarily.
+local CLICK_DRAG_THRESHOLD = 3 -- screen pixels
+local dragStartX, dragStartY
+local sizing = false
+
 local function StopSizing()
-    frame:StopMovingOrSizing()
+    if sizing then
+        frame:StopMovingOrSizing()
+        sizing = false
+        SaveLayout()
+    end
     sizeGrip:SetScript("OnUpdate", nil)
-    SaveLayout()
+    dragStartX, dragStartY = nil, nil
 end
 
 sizeGrip:SetScript("OnMouseDown", function(self)
-    frame:StartSizing("BOTTOMRIGHT")
+    dragStartX, dragStartY = GetCursorPosition()
     -- Sizing must end when the mouse button does, even if the release
     -- lands off the grip (easy after overshooting a size bound). If it
     -- didn't, the frame would keep resizing toward the cursor and "jump"
@@ -110,6 +125,14 @@ sizeGrip:SetScript("OnMouseDown", function(self)
     self:SetScript("OnUpdate", function()
         if not IsMouseButtonDown("LeftButton") then
             StopSizing()
+            return
+        end
+        if not sizing then
+            local cursorX, cursorY = GetCursorPosition()
+            if abs(cursorX - dragStartX) > CLICK_DRAG_THRESHOLD or abs(cursorY - dragStartY) > CLICK_DRAG_THRESHOLD then
+                sizing = true
+                frame:StartSizing("BOTTOMRIGHT")
+            end
         end
     end)
 end)
