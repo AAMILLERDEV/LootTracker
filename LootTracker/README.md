@@ -1,6 +1,6 @@
 # LootTracker
 
-Ever wonder which mobs are actually worth farming? **LootTracker** keeps a running tally of everything you loot — organized by the NPC or gathering node it came from — and shows you what it's all worth at a vendor.
+Ever wanted a clean view of all the loot you collected during your gold farming sessions? **LootTracker** keeps a running tally of everything you loot — organized by the NPC or gathering node it came from — and shows you what it's all worth at a vendor.
 
 For **World of Warcraft: TBC Anniversary (2.5.6)**.
 
@@ -22,7 +22,6 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
    World of Warcraft\_anniversary_\Interface\AddOns\
    ```
 2. Enable **LootTracker** in the AddOns list on the character select screen.
-3. In-game, click the **bag icon** on your screen (or type `/lt`) to open the tracker, then go kill something!
 
 ## How to use it
 
@@ -55,4 +54,4 @@ Right-click the bag icon for extras:
 - A mob may briefly appear as `NPC #1234` if its name isn't known yet; it fills in as you keep playing.
 - Newly seen items may take a moment to show their name and price while the game fetches item data.
 
-Happy farming!
+Please feel free to provide as much feedback as possible. Whether it's bug fixes, concerns, likes or dislikes! I'm happy to discuss possible improvements as well, as I'm always looking to improve my work. 
