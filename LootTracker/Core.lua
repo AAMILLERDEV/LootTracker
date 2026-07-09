@@ -389,6 +389,26 @@ local function OnLootMessage(message)
     end
 end
 
+---@diagnostic disable-next-line: deprecated
+local IsAddOnLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+
+-- Reads the current buyout price from Auctionator via its published API
+-- (Auctionator/Source/API/v1/GetAuctionPrice.lua) instead of its internal
+-- AUCTIONATOR_PRICE_DATABASE saved-variable table, so this keeps working
+-- even if Auctionator's internal storage format changes. Returns nil
+-- whenever Auctionator isn't installed/loaded, or has no data for
+-- itemID — callers must treat nil as "unknown", not zero.
+function LT.GetAuctionValue(itemID)
+    if not itemID or not IsAddOnLoaded("Auctionator") then return nil end
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if not api or not api.GetAuctionPriceByItemID then return nil end
+    local ok, price = pcall(api.GetAuctionPriceByItemID, ADDON_NAME, itemID)
+    if ok and type(price) == "number" then
+        return price
+    end
+    return nil
+end
+
 function LT.GetSources()
     return LootTrackerDB and LootTrackerDB.sources
 end

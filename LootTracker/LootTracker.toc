@@ -1,10 +1,11 @@
 ## Interface: 20505, 20506
 ## Title: LootTracker
-## Notes: Tracks loot you collect from NPCs and gathering nodes, grouped by source with vendor values.
-## Author: aajmiller12
+## Notes: Tracks loot you collect from NPCs and gathering nodes, grouped by source with vendor values. Shows AH values too if Auctionator is installed.
+## Author: Aaron Miller / https://github.com/AAMILLERDEV
 ## IconTexture: Interface\AddOns\LootTracker\Media\LootTracker-icon.png
 ## Version: 0.7.4-debug
 ## SavedVariablesPerCharacter: LootTrackerDB
+## OptionalDeps: Auctionator
 
 Core.lua
 UI.lua

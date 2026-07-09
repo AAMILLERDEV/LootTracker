@@ -7,6 +7,10 @@ local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 local GetCoinTextureString = (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString) or GetCoinTextureString
 ---@diagnostic disable-next-line: deprecated
 local GetItemIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
+---@diagnostic disable-next-line: deprecated
+local IsAddOnLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+
+local AH_COLOR = "|cff80c0ff"
 
 local FALLBACK_ICON = 134400 -- INV_Misc_QuestionMark
 
@@ -168,8 +172,16 @@ local function ItemSellPrice(itemID)
     return sellPrice or 0
 end
 
+-- nil means "Auctionator has no price for this item", not zero.
+local function ItemAuctionValue(itemID, count)
+    local unitPrice = LT.GetAuctionValue and LT.GetAuctionValue(itemID)
+    return unitPrice and (unitPrice * count) or nil
+end
+
 -- Turn the DB into a sorted display list: sources by total vendor value,
--- items within a source likewise.
+-- items within a source likewise. ahTotal/itemCount let the renderer
+-- tell "nothing sold on the AH yet" (itemCount > 0, ahTotal == copper)
+-- apart from "no items at all" (itemCount == 0) — see RenderGrouped.
 local function BuildGroups()
     local groups = {}
     local sources = LT.GetSources and LT.GetSources()
@@ -177,17 +189,25 @@ local function BuildGroups()
 
     for _, record in pairs(sources) do
         local items, copper = {}, record.copper or 0
-        local total = copper
+        local total, ahTotal, itemCount = copper, copper, 0
         for itemID, count in pairs(record.items) do
             local value = ItemSellPrice(itemID) * count
             total = total + value
-            items[#items + 1] = { itemID = itemID, count = count, value = value }
+            itemCount = itemCount + 1
+            local auctionValue = ItemAuctionValue(itemID, count)
+            if auctionValue then
+                ahTotal = ahTotal + auctionValue
+            end
+            items[#items + 1] = { itemID = itemID, count = count, value = value, auctionValue = auctionValue }
         end
         sort(items, function(a, b)
             if a.value ~= b.value then return a.value > b.value end
             return a.itemID < b.itemID
         end)
-        groups[#groups + 1] = { record = record, items = items, copper = copper, total = total }
+        groups[#groups + 1] = {
+            record = record, items = items, copper = copper,
+            total = total, ahTotal = ahTotal, itemCount = itemCount,
+        }
     end
 
     sort(groups, function(a, b)
@@ -212,6 +232,7 @@ end
 local function RenderGrouped(groups)
     local rowIndex = 0
     local anyExpanded = false
+    local ahAvailable = IsAddOnLoaded("Auctionator")
 
     for _, group in ipairs(groups) do
         local record = group.record
@@ -224,8 +245,14 @@ local function RenderGrouped(groups)
         local indicator = record.collapsed
             and "|TInterface\\Buttons\\UI-PlusButton-Up:16|t"
             or "|TInterface\\Buttons\\UI-MinusButton-Up:16|t"
-        header.text:SetText(("%s |cffffd100%s|r  x%d looted — %s"):format(
-            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.total)))
+        local headerText = ("%s |cffffd100%s|r  x%d looted — %s"):format(
+            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.total))
+        if ahAvailable then
+            local known = group.itemCount == 0 or group.ahTotal > group.copper or group.copper > 0
+            headerText = headerText .. ("  %sAH: %s|r"):format(
+                AH_COLOR, known and GetCoinTextureString(group.ahTotal) or "—")
+        end
+        header.text:SetText(headerText)
         header.record = record
         header:EnableMouse(true)
 
@@ -239,8 +266,13 @@ local function RenderGrouped(groups)
             for _, item in ipairs(group.items) do
                 rowIndex = rowIndex + 1
                 local icon = GetItemIcon(item.itemID) or FALLBACK_ICON
-                AcquireRow(rowIndex).text:SetText(("    |T%d:14|t %s x%d — %s"):format(
-                    icon, ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value)))
+                local itemText = ("    |T%d:14|t %s x%d — %s"):format(
+                    icon, ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value))
+                if ahAvailable then
+                    itemText = itemText .. ("  %sAH: %s|r"):format(
+                        AH_COLOR, item.auctionValue and GetCoinTextureString(item.auctionValue) or "—")
+                end
+                AcquireRow(rowIndex).text:SetText(itemText)
             end
         end
     end
@@ -271,6 +303,7 @@ local function RenderTimeline()
     local sources = LT.GetSources and LT.GetSources()
     if not log then return 0 end
 
+    local ahAvailable = IsAddOnLoaded("Auctionator")
     local rowIndex = 0
     for i = #log, 1, -1 do
         local entry = log[i]
@@ -286,8 +319,14 @@ local function RenderTimeline()
         else
             local icon = GetItemIcon(entry.itemID) or FALLBACK_ICON
             local value = ItemSellPrice(entry.itemID) * entry.count
-            row.text:SetText(("%s  |T%d:14|t %s x%d — %s  |cff808080from|r %s"):format(
-                timeText, icon, ColoredItemName(entry.itemID), entry.count, GetCoinTextureString(value), label))
+            local text = ("%s  |T%d:14|t %s x%d — %s  |cff808080from|r %s"):format(
+                timeText, icon, ColoredItemName(entry.itemID), entry.count, GetCoinTextureString(value), label)
+            if ahAvailable then
+                local auctionValue = ItemAuctionValue(entry.itemID, entry.count)
+                text = text .. ("  %sAH: %s|r"):format(
+                    AH_COLOR, auctionValue and GetCoinTextureString(auctionValue) or "—")
+            end
+            row.text:SetText(text)
         end
     end
     return rowIndex
@@ -307,9 +346,12 @@ function Refresh()
     end
 
     local groups = BuildGroups()
-    local grandTotal = 0
+    local grandTotal, grandAhTotal, grandCopper, grandItemCount = 0, 0, 0, 0
     for _, group in ipairs(groups) do
         grandTotal = grandTotal + group.total
+        grandAhTotal = grandAhTotal + group.ahTotal
+        grandCopper = grandCopper + group.copper
+        grandItemCount = grandItemCount + group.itemCount
     end
 
     local rowIndex = (viewMode == "timeline") and RenderTimeline() or RenderGrouped(groups)
@@ -328,7 +370,13 @@ function Refresh()
     end
 
     content:SetHeight(rowIndex * ROW_HEIGHT)
-    totalText:SetText("Total: " .. GetCoinTextureString(grandTotal))
+    local totalLine = "Total: " .. GetCoinTextureString(grandTotal)
+    if IsAddOnLoaded("Auctionator") then
+        local known = grandItemCount == 0 or grandAhTotal > grandCopper or grandCopper > 0
+        totalLine = totalLine .. ("   %sAH: %s|r"):format(
+            AH_COLOR, known and GetCoinTextureString(grandAhTotal) or "—")
+    end
+    totalText:SetText(totalLine)
 end
 
 -- Collapse All + view toggle share their own row, centered on the frame
