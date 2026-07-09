@@ -27,6 +27,10 @@
         "EasyMenu",
         "GOLD_AMOUNT",
         "SILVER_AMOUNT",
-        "COPPER_AMOUNT"
+        "COPPER_AMOUNT",
+        "LOOT_ITEM_SELF_MULTIPLE",
+        "LOOT_ITEM_PUSHED_SELF_MULTIPLE",
+        "LOOT_ITEM_SELF",
+        "LOOT_ITEM_PUSHED_SELF"
     ]
 }
