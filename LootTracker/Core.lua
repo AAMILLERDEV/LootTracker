@@ -189,10 +189,29 @@ local function CollectSlotSources(slot, fallbackQuantity)
             sources[#sources + 1] = { guid = info[i], quantity = quantity }
         end
     end
-    -- If the API reported no per-source quantities, credit the whole
-    -- amount to the first source rather than losing it.
-    if quantitySum == 0 and sources[1] then
-        sources[1].quantity = fallbackQuantity
+    -- GetLootSourceInfo's per-source quantities can under- or over-report
+    -- versus the slot's actual quantity (observed: a x2 stack reported
+    -- with a source sum of only 1). GetLootSlotInfo's fallbackQuantity is
+    -- authoritative, so reconcile against it whenever they disagree —
+    -- not just when the source sum came back zero — rather than silently
+    -- short-counting.
+    if #sources == 1 then
+        if sources[1].quantity ~= fallbackQuantity then
+            Debug(("slot %d: source quantity %d != actual %d, correcting"):format(
+                slot, sources[1].quantity, fallbackQuantity))
+            sources[1].quantity = fallbackQuantity
+        end
+    elseif #sources > 1 and quantitySum ~= fallbackQuantity then
+        Debug(("slot %d: source quantity sum %d != actual %d, rescaling %d sources"):format(
+            slot, quantitySum, fallbackQuantity, #sources))
+        local idealSum, creditedSum = 0, 0
+        for _, source in ipairs(sources) do
+            local share = quantitySum > 0 and (source.quantity / quantitySum) or (1 / #sources)
+            idealSum = idealSum + fallbackQuantity * share
+            local credit = floor(idealSum + 0.5) - creditedSum
+            creditedSum = creditedSum + credit
+            source.quantity = credit
+        end
     end
     -- GetLootSourceInfo occasionally returns nothing usable (seen under
     -- back-to-back kills), which would otherwise drop the item entirely

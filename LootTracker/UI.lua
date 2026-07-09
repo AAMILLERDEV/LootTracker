@@ -12,7 +12,7 @@ local FALLBACK_ICON = 134400 -- INV_Misc_QuestionMark
 
 local ROW_HEIGHT = 16
 local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
-local MIN_WIDTH, MIN_HEIGHT = 240, 240
+local MIN_WIDTH, MIN_HEIGHT = 260, 270
 
 local SaveLayout -- defined below; captured by drag/resize handlers
 
@@ -60,10 +60,10 @@ frame:Hide()
 
 tinsert(UISpecialFrames, "LootTrackerFrame")
 
--- Sits below the Collapse All / close button row so it never overlaps
--- them at narrow widths.
+-- Shares the top row with the close button, above the Collapse All /
+-- view toggle row.
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOP", 0, -38)
+title:SetPoint("TOP", 0, -16)
 title:SetText("LootTracker")
 
 local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -107,7 +107,7 @@ local totalText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 totalText:SetPoint("BOTTOMRIGHT", -20, 18)
 
 local scrollFrame = CreateFrame("ScrollFrame", "LootTrackerScrollFrame", frame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", 16, -60)
+scrollFrame:SetPoint("TOPLEFT", 16, -66)
 scrollFrame:SetPoint("BOTTOMRIGHT", -36, 44)
 
 local content = CreateFrame("Frame", nil, scrollFrame)
@@ -289,6 +289,14 @@ end
 function Refresh()
     if viewToggleButton then
         viewToggleButton:SetText(viewMode == "timeline" and "Grouped View" or "Timeline View")
+        viewToggleButton:ClearAllPoints()
+        if viewMode == "timeline" then
+            -- Collapse All is hidden in this view; center the toggle
+            -- alone on the row instead of leaving it offset to one side.
+            viewToggleButton:SetPoint("TOP", frame, "TOP", 0, -42)
+        else
+            viewToggleButton:SetPoint("TOPLEFT", collapseAllButton, "TOPRIGHT", 6, 0)
+        end
     end
 
     local groups = BuildGroups()
@@ -314,9 +322,13 @@ function Refresh()
     totalText:SetText("Total: " .. GetCoinTextureString(grandTotal))
 end
 
+-- Collapse All + view toggle share their own row, centered on the frame
+-- (anchored from "TOP", which is top-CENTER, so this stays centered at
+-- any window width) below the close button's row so widening either
+-- button never risks overlapping it.
 collapseAllButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-collapseAllButton:SetSize(90, 20)
-collapseAllButton:SetPoint("TOPLEFT", 12, -13)
+collapseAllButton:SetSize(100, 20)
+collapseAllButton:SetPoint("TOPLEFT", frame, "TOP", -118, -42)
 collapseAllButton:SetText("Collapse All")
 collapseAllButton:Hide()
 collapseAllButton:SetScript("OnClick", function()
@@ -336,8 +348,8 @@ collapseAllButton:SetScript("OnClick", function()
 end)
 
 viewToggleButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-viewToggleButton:SetSize(90, 20)
-viewToggleButton:SetPoint("LEFT", collapseAllButton, "RIGHT", 6, 0)
+viewToggleButton:SetSize(130, 20)
+viewToggleButton:SetPoint("TOPLEFT", collapseAllButton, "TOPRIGHT", 6, 0)
 viewToggleButton:SetScript("OnClick", function()
     viewMode = (viewMode == "timeline") and "grouped" or "timeline"
     SaveLayout()
