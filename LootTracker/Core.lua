@@ -49,11 +49,12 @@ AddLootPattern(LOOT_ITEM_SELF)
 -- Only trust the last gathering cast target as a node name for this long.
 local OBJECT_NAME_WINDOW = 15
 
--- Temporary diagnostics for the "loot sometimes goes untracked" report.
+-- Diagnostics for the "loot sometimes goes untracked" class of report.
 -- Prints only at the exact points where a loot event could vanish
 -- silently, so a repro tells us which path is actually firing instead
--- of guessing. Safe to remove once the cause is confirmed.
-local DEBUG = true
+-- of guessing. Off by default for release; flip to true (or expose a
+-- /lt debug toggle) when chasing a report like that.
+local DEBUG = false
 local function Debug(msg)
     if DEBUG then
         print("|cff33ff99LootTracker debug:|r " .. msg)

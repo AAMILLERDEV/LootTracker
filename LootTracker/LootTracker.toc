@@ -3,7 +3,7 @@
 ## Notes: Tracks loot you collect from NPCs and gathering nodes, grouped by source with vendor values. Shows AH values too if Auctionator is installed.
 ## Author: Aaron Miller / https://github.com/AAMILLERDEV
 ## IconTexture: Interface\AddOns\LootTracker\Media\LootTracker-icon.png
-## Version: 0.7.4-debug
+## Version: 1.0
 ## SavedVariablesPerCharacter: LootTrackerDB
 ## OptionalDeps: Auctionator
 

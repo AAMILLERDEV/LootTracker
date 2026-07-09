@@ -18,7 +18,18 @@ local ROW_HEIGHT = 16
 local FRAME_WIDTH, FRAME_HEIGHT = 420, 500
 local MIN_WIDTH, MIN_HEIGHT = 260, 270
 
-local SaveLayout -- defined below; captured by drag/resize handlers
+local SaveLayout          -- defined below; captured by drag/resize handlers
+local Refresh             -- defined below; needed by row/button click handlers
+local collapseAllButton   -- created below; label is updated inside Refresh
+local viewToggleButton    -- created below; label is updated inside Refresh
+local viewMode = "grouped" -- "grouped" or "timeline"; persisted in ui.viewMode
+local showVendor = true    -- persisted in ui.showVendor
+local showAH = true        -- persisted in ui.showAH
+local showDateTime = true  -- persisted in ui.showDateTime; timeline view only
+
+-- Grand-total breakdown from the last Refresh(), read by totalHitbox's
+-- tooltip (built lazily on hover instead of recomputed every refresh).
+local lastVendorTotal, lastAhTotal, lastItemCount, lastAhShown = 0, 0, 0, false
 
 local frame = CreateFrame("Frame", "LootTrackerFrame", UIParent, "BackdropTemplate")
 frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
@@ -77,7 +88,7 @@ closeButton:SetPoint("TOPRIGHT", -6, -6)
 -- as right-clicking the launcher icon (see OpenOptionsMenu below).
 local optionsButton = CreateFrame("Button", nil, frame)
 optionsButton:SetSize(20, 20)
-optionsButton:SetPoint("TOPLEFT", 8, -8)
+optionsButton:SetPoint("TOPLEFT", 14, -14)
 optionsButton:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
 optionsButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
 optionsButton:SetScript("OnEnter", function(self)
@@ -117,6 +128,15 @@ local function StopSizing()
 end
 
 sizeGrip:SetScript("OnMouseDown", function(self)
+    -- Defensively close out any resize left dangling from a previous
+    -- cycle before starting a new one. StartSizing keeps tracking the
+    -- cursor until something calls StopMovingOrSizing — it isn't tied to
+    -- the mouse button — so if that ever failed to run (e.g. the window
+    -- got hidden mid-drag), the frame stays silently latched onto the
+    -- cursor and only visibly "jumps" once the cursor moves again.
+    -- StopMovingOrSizing is a harmless no-op if nothing was in progress.
+    frame:StopMovingOrSizing()
+    sizing = false
     dragStartX, dragStartY = GetCursorPosition()
     -- Sizing must end when the mouse button does, even if the release
     -- lands off the grip (easy after overshooting a size bound). If it
@@ -137,17 +157,42 @@ sizeGrip:SetScript("OnMouseDown", function(self)
     end)
 end)
 sizeGrip:SetScript("OnMouseUp", StopSizing)
+-- If the window closes mid-resize (Esc, toggling it off, etc.) with the
+-- mouse still down, sizeGrip's OnUpdate stops firing along with it (a
+-- hidden frame's OnUpdate doesn't run), so StopSizing would otherwise
+-- never get called and the resize is left dangling — see above.
+frame:HookScript("OnHide", StopSizing)
 
-local resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-resetButton:SetSize(80, 22)
-resetButton:SetPoint("BOTTOMLEFT", 16, 14)
-resetButton:SetText("Reset")
-resetButton:SetScript("OnClick", function()
-    StaticPopup_Show("LOOTTRACKER_RESET")
-end)
-
+-- Just "Total: X" at a glance; the vendor/AH breakdown (when those
+-- toggles are on) lives in a tooltip instead of inline, so this stays
+-- short regardless of window width. See totalHitbox below.
 local totalText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-totalText:SetPoint("BOTTOMRIGHT", -20, 18)
+totalText:SetPoint("BOTTOM", 0, 18)
+
+local totalHitbox = CreateFrame("Frame", nil, frame)
+totalHitbox:SetAllPoints(totalText)
+totalHitbox:EnableMouse(true)
+totalHitbox:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Session Total")
+    local addedLine = false
+    if showVendor then
+        GameTooltip:AddDoubleLine("Vendor value", GetCoinTextureString(lastVendorTotal), 1, 1, 1, 1, 1, 1)
+        addedLine = true
+    end
+    if lastAhShown then
+        local known = lastItemCount == 0 or lastAhTotal > 0
+        GameTooltip:AddDoubleLine("AH value", known and GetCoinTextureString(lastAhTotal) or "—", 1, 1, 1, 1, 1, 1)
+        addedLine = true
+    end
+    if not addedLine then
+        GameTooltip:AddLine("Enable vendor/AH value in Options for a breakdown.", 0.5, 0.5, 0.5, true)
+    end
+    GameTooltip:Show()
+end)
+totalHitbox:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
 
 local scrollFrame = CreateFrame("ScrollFrame", "LootTrackerScrollFrame", frame, "UIPanelScrollFrameTemplate")
 scrollFrame:SetPoint("TOPLEFT", 16, -66)
@@ -159,14 +204,6 @@ scrollFrame:SetScrollChild(content)
 scrollFrame:SetScript("OnSizeChanged", function(_, width)
     content:SetWidth(width)
 end)
-
-local Refresh            -- defined below; needed by row/button click handlers
-local collapseAllButton  -- created below; label is updated inside Refresh
-local viewToggleButton   -- created below; label is updated inside Refresh
-local viewMode = "grouped" -- "grouped" or "timeline"; persisted in ui.viewMode
-local showVendor = true    -- persisted in ui.showVendor
-local showAH = true        -- persisted in ui.showAH
-local showDateTime = true  -- persisted in ui.showDateTime; timeline view only
 
 -- Rows are buttons so group headers can be clicked to collapse/expand.
 -- A header row carries its DB record in row.record; item rows leave it
@@ -220,10 +257,14 @@ local function ItemAuctionValue(itemID, count)
     return unitPrice and (unitPrice * count) or nil
 end
 
--- Turn the DB into a sorted display list: sources by total vendor value,
--- items within a source likewise. ahTotal/itemCount let the renderer
--- tell "nothing sold on the AH yet" (itemCount > 0, ahTotal == copper)
--- apart from "no items at all" (itemCount == 0) — see RenderGrouped.
+-- Turn the DB into a sorted display list: sources by total value, items
+-- within a source likewise. Currency is never folded into vendorTotal or
+-- ahTotal (those are pure per-item sums, for the raw "Show vendor/AH
+-- value" breakdowns) — it only feeds valueTotal, LootTracker's best
+-- estimate of what a source is actually worth: AH price per item where
+-- Auctionator has one, vendor price as the fallback, plus currency.
+-- itemCount lets the renderer tell "nothing sold on the AH yet"
+-- (itemCount > 0, ahTotal == 0) apart from "no items at all".
 local function BuildGroups()
     local groups = {}
     local sources = LT.GetSources and LT.GetSources()
@@ -231,29 +272,35 @@ local function BuildGroups()
 
     for _, record in pairs(sources) do
         local items, copper = {}, record.copper or 0
-        local total, ahTotal, itemCount = copper, copper, 0
+        local vendorTotal, ahTotal, valueTotal, itemCount = 0, 0, copper, 0
         for itemID, count in pairs(record.items) do
             local value = ItemSellPrice(itemID) * count
-            total = total + value
-            itemCount = itemCount + 1
             local auctionValue = ItemAuctionValue(itemID, count)
+            local bestValue = auctionValue or value
+            vendorTotal = vendorTotal + value
+            valueTotal = valueTotal + bestValue
+            itemCount = itemCount + 1
             if auctionValue then
                 ahTotal = ahTotal + auctionValue
             end
-            items[#items + 1] = { itemID = itemID, count = count, value = value, auctionValue = auctionValue }
+            items[#items + 1] = {
+                itemID = itemID, count = count, value = value,
+                auctionValue = auctionValue, bestValue = bestValue,
+            }
         end
         sort(items, function(a, b)
-            if a.value ~= b.value then return a.value > b.value end
+            if a.bestValue ~= b.bestValue then return a.bestValue > b.bestValue end
             return a.itemID < b.itemID
         end)
         groups[#groups + 1] = {
             record = record, items = items, copper = copper,
-            total = total, ahTotal = ahTotal, itemCount = itemCount,
+            vendorTotal = vendorTotal, ahTotal = ahTotal,
+            valueTotal = valueTotal, itemCount = itemCount,
         }
     end
 
     sort(groups, function(a, b)
-        if a.total ~= b.total then return a.total > b.total end
+        if a.valueTotal ~= b.valueTotal then return a.valueTotal > b.valueTotal end
         return (a.record.name or "") < (b.record.name or "")
     end)
     return groups
@@ -287,13 +334,13 @@ local function RenderGrouped(groups)
         local indicator = record.collapsed
             and "|TInterface\\Buttons\\UI-PlusButton-Up:16|t"
             or "|TInterface\\Buttons\\UI-MinusButton-Up:16|t"
-        local headerText = ("%s |cffffd100%s|r  x%d looted"):format(
-            indicator, SourceLabel(record), record.loots)
+        local headerText = ("%s |cffffd100%s|r  x%d looted — %s"):format(
+            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.valueTotal))
         if showVendor then
-            headerText = headerText .. " — " .. GetCoinTextureString(group.total)
+            headerText = headerText .. ("  |cff808080Vendor:|r %s"):format(GetCoinTextureString(group.vendorTotal))
         end
         if ahShown then
-            local known = group.itemCount == 0 or group.ahTotal > group.copper or group.copper > 0
+            local known = group.itemCount == 0 or group.ahTotal > 0
             headerText = headerText .. ("  %sAH: %s|r"):format(
                 AH_COLOR, known and GetCoinTextureString(group.ahTotal) or "—")
         end
@@ -316,9 +363,8 @@ local function RenderGrouped(groups)
                 if showVendor then
                     itemText = itemText .. " — " .. GetCoinTextureString(item.value)
                 end
-                if ahShown then
-                    itemText = itemText .. ("  %sAH: %s|r"):format(
-                        AH_COLOR, item.auctionValue and GetCoinTextureString(item.auctionValue) or "—")
+                if ahShown and item.auctionValue then
+                    itemText = itemText .. ("  %sAH: %s|r"):format(AH_COLOR, GetCoinTextureString(item.auctionValue))
                 end
                 AcquireRow(rowIndex).text:SetText(itemText)
             end
@@ -357,27 +403,36 @@ local function RenderTimeline()
         local entry = log[i]
         local record = sources and sources[entry.kind .. ":" .. entry.id]
         local label = SourceLabel(record or { kind = entry.kind, id = entry.id })
-        local prefix = showDateTime and ("|cff808080" .. date("%H:%M:%S", entry.time) .. "|r  ") or ""
+
+        -- Source name gets its own row (with the timestamp, if shown)
+        -- above the item/currency row, instead of a "from X" suffix
+        -- tacked onto the end — keeps the detail row from stretching
+        -- wide with a long item name plus a long source name.
+        rowIndex = rowIndex + 1
+        local headerText = ("|cffffd100%s|r"):format(label)
+        if showDateTime then
+            headerText = ("|cff808080%s|r  %s"):format(date("%H:%M:%S", entry.time), headerText)
+        end
+        AcquireRow(rowIndex).text:SetText(headerText)
 
         rowIndex = rowIndex + 1
         local row = AcquireRow(rowIndex)
         if entry.copper then
-            row.text:SetText(("%s|TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s  |cff808080from|r %s"):format(
-                prefix, GetCoinTextureString(entry.copper), label))
+            row.text:SetText(("    |TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s"):format(
+                GetCoinTextureString(entry.copper)))
         else
             local icon = GetItemIcon(entry.itemID) or FALLBACK_ICON
-            local text = ("%s|T%d:14|t %s x%d"):format(
-                prefix, icon, ColoredItemName(entry.itemID), entry.count)
+            local text = ("    |T%d:14|t %s x%d"):format(icon, ColoredItemName(entry.itemID), entry.count)
             if showVendor then
                 local value = ItemSellPrice(entry.itemID) * entry.count
                 text = text .. " — " .. GetCoinTextureString(value)
             end
             if ahShown then
                 local auctionValue = ItemAuctionValue(entry.itemID, entry.count)
-                text = text .. ("  %sAH: %s|r"):format(
-                    AH_COLOR, auctionValue and GetCoinTextureString(auctionValue) or "—")
+                if auctionValue then
+                    text = text .. ("  %sAH: %s|r"):format(AH_COLOR, GetCoinTextureString(auctionValue))
+                end
             end
-            text = text .. ("  |cff808080from|r %s"):format(label)
             row.text:SetText(text)
         end
     end
@@ -398,11 +453,11 @@ function Refresh()
     end
 
     local groups = BuildGroups()
-    local grandTotal, grandAhTotal, grandCopper, grandItemCount = 0, 0, 0, 0
+    local grandVendorTotal, grandAhTotal, grandValueTotal, grandItemCount = 0, 0, 0, 0
     for _, group in ipairs(groups) do
-        grandTotal = grandTotal + group.total
+        grandVendorTotal = grandVendorTotal + group.vendorTotal
         grandAhTotal = grandAhTotal + group.ahTotal
-        grandCopper = grandCopper + group.copper
+        grandValueTotal = grandValueTotal + group.valueTotal
         grandItemCount = grandItemCount + group.itemCount
     end
 
@@ -422,20 +477,9 @@ function Refresh()
     end
 
     content:SetHeight(rowIndex * ROW_HEIGHT)
-    local ahShown = showAH and IsAddOnLoaded("Auctionator")
-    local totalLine = "Total:"
-    if showVendor then
-        totalLine = totalLine .. " " .. GetCoinTextureString(grandTotal)
-    end
-    if ahShown then
-        local known = grandItemCount == 0 or grandAhTotal > grandCopper or grandCopper > 0
-        totalLine = totalLine .. ("   %sAH: %s|r"):format(
-            AH_COLOR, known and GetCoinTextureString(grandAhTotal) or "—")
-    end
-    if not showVendor and not ahShown then
-        totalLine = totalLine .. " —"
-    end
-    totalText:SetText(totalLine)
+    lastVendorTotal, lastAhTotal, lastItemCount = grandVendorTotal, grandAhTotal, grandItemCount
+    lastAhShown = showAH and IsAddOnLoaded("Auctionator")
+    totalText:SetText("Total: " .. GetCoinTextureString(grandValueTotal))
 end
 
 -- Collapse All + view toggle share their own row, centered on the frame
@@ -600,6 +644,9 @@ local function OpenOptionsMenu(owner)
             rootDescription:CreateButton(CheckableLabel("Show vendor value", showVendor), ToggleShowVendor)
             rootDescription:CreateButton(CheckableLabel("Show AH value", showAH), ToggleShowAH)
             rootDescription:CreateButton(CheckableLabel("Show date/time", showDateTime), ToggleShowDateTime)
+            rootDescription:CreateButton("Reset all data", function()
+                StaticPopup_Show("LOOTTRACKER_RESET")
+            end)
         end)
     elseif EasyMenu then
         if not optionsMenu then
@@ -613,6 +660,9 @@ local function OpenOptionsMenu(owner)
             { text = CheckableLabel("Show vendor value", showVendor), notCheckable = true, func = ToggleShowVendor },
             { text = CheckableLabel("Show AH value", showAH), notCheckable = true, func = ToggleShowAH },
             { text = CheckableLabel("Show date/time", showDateTime), notCheckable = true, func = ToggleShowDateTime },
+            { text = "Reset all data", notCheckable = true, func = function()
+                StaticPopup_Show("LOOTTRACKER_RESET")
+            end },
         }, optionsMenu, "cursor", 0, 0, "MENU")
     end
 end
