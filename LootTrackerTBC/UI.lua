@@ -266,7 +266,7 @@ end
 -- Turn the DB into a sorted display list: sources by total value, items
 -- within a source likewise. Currency is never folded into vendorTotal or
 -- ahTotal (those are pure per-item sums, for the raw "Show vendor/AH
--- value" breakdowns) — it only feeds valueTotal, LootTracker's best
+-- value" breakdowns) — it only feeds valueTotal, LootTrackerTBC's best
 -- estimate of what a source is actually worth: AH price per item where
 -- Auctionator has one, vendor price as the fallback, plus currency.
 -- itemCount lets the renderer tell "nothing sold on the AH yet"

@@ -11,7 +11,7 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 - **Shows coin drops.** Money looted from mobs appears as a **Currency** line inside each group.
 - **Adds it all up.** Every group shows its combined worth, and the bottom of the window shows the grand total for your session — using the AH price where one's known and falling back to the vendor price otherwise, plus any coin looted, so it's the best single estimate of what a session was actually worth.
 - **Auction house values, if you have Auctionator.** With [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, every item can also show its raw AH price alongside its vendor price (both are optional columns — see Options below). No Auctionator? LootTrackerTBC works exactly the same, just without that column, and the grand total quietly falls back to vendor pricing.
-- **Two ways to browse.** Switch between a **grouped** view (loot stacked by source) and a **timeline** view (a chronological, newest-first log of every pickup) with one click.
+- **Two ways to browse.** Switch between a **grouped** view (loot stacked by source) and a **timeline** view (a chronological, newest-first log of every pickup, each entry showing its timestamp and source above the item so long names don't run together) with one click.
 - **Counts only *your* loot.** If a party member picks something up, it doesn't get counted. Only what actually enters your bags is tracked.
 - **Resize and reposition freely.** The window and the launcher button both remember where you left them, per character.
 - Your data is saved **per character** and survives logging out.
