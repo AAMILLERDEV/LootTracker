@@ -34,18 +34,22 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 | See loot in the order you picked it up | Click **Timeline View** at the top |
 | Go back to loot grouped by source | Click **Grouped View** at the top |
 | Start fresh | Click **Reset** (bottom left) or type `/lt reset` |
+| Open the options menu | Click the gear icon (top left), or right-click the bag icon |
 | Move the window or bag icon | Drag it anywhere with the left mouse button |
 | Make the window bigger or smaller | Drag the grip in the bottom-right corner |
 
 The list sorts itself by value, so your most profitable targets are always at the top.
 
-### Bag icon options
+### Options
 
-Right-click the bag icon for extras:
+Click the gear icon in the top-left of the window, or right-click the bag icon — both open the same menu:
 
 - **Pin window (ignore Esc)** — normally the Esc key closes the tracker like any other window. Pin it and it stays open (handy while farming).
 - **Reset window size** — snaps the window back to its original size.
 - **Reset window position** — brings the window back to the center of the screen, in case it wanders off somewhere unhelpful.
+- **Show vendor value** — toggle the vendor sell-price column off if you only care about AH values (or vice versa).
+- **Show AH value** — toggle the Auctionator column off if you'd rather not see it.
+- **Show date/time** — toggle the timestamp shown on each entry in Timeline View.
 
 ## Good to know
 

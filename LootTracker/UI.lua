@@ -73,6 +73,22 @@ title:SetText("LootTracker")
 local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
 closeButton:SetPoint("TOPRIGHT", -6, -6)
 
+-- Mirrors the close button on the opposite corner; opens the same menu
+-- as right-clicking the launcher icon (see OpenOptionsMenu below).
+local optionsButton = CreateFrame("Button", nil, frame)
+optionsButton:SetSize(20, 20)
+optionsButton:SetPoint("TOPLEFT", 8, -8)
+optionsButton:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+optionsButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+optionsButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("LootTracker Options")
+    GameTooltip:Show()
+end)
+optionsButton:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
+
 local sizeGrip = CreateFrame("Button", nil, frame)
 sizeGrip:SetSize(16, 16)
 sizeGrip:SetPoint("BOTTOMRIGHT", -8, 8)
@@ -125,6 +141,9 @@ local Refresh            -- defined below; needed by row/button click handlers
 local collapseAllButton  -- created below; label is updated inside Refresh
 local viewToggleButton   -- created below; label is updated inside Refresh
 local viewMode = "grouped" -- "grouped" or "timeline"; persisted in ui.viewMode
+local showVendor = true    -- persisted in ui.showVendor
+local showAH = true        -- persisted in ui.showAH
+local showDateTime = true  -- persisted in ui.showDateTime; timeline view only
 
 -- Rows are buttons so group headers can be clicked to collapse/expand.
 -- A header row carries its DB record in row.record; item rows leave it
@@ -232,7 +251,7 @@ end
 local function RenderGrouped(groups)
     local rowIndex = 0
     local anyExpanded = false
-    local ahAvailable = IsAddOnLoaded("Auctionator")
+    local ahShown = showAH and IsAddOnLoaded("Auctionator")
 
     for _, group in ipairs(groups) do
         local record = group.record
@@ -245,9 +264,12 @@ local function RenderGrouped(groups)
         local indicator = record.collapsed
             and "|TInterface\\Buttons\\UI-PlusButton-Up:16|t"
             or "|TInterface\\Buttons\\UI-MinusButton-Up:16|t"
-        local headerText = ("%s |cffffd100%s|r  x%d looted — %s"):format(
-            indicator, SourceLabel(record), record.loots, GetCoinTextureString(group.total))
-        if ahAvailable then
+        local headerText = ("%s |cffffd100%s|r  x%d looted"):format(
+            indicator, SourceLabel(record), record.loots)
+        if showVendor then
+            headerText = headerText .. " — " .. GetCoinTextureString(group.total)
+        end
+        if ahShown then
             local known = group.itemCount == 0 or group.ahTotal > group.copper or group.copper > 0
             headerText = headerText .. ("  %sAH: %s|r"):format(
                 AH_COLOR, known and GetCoinTextureString(group.ahTotal) or "—")
@@ -266,9 +288,12 @@ local function RenderGrouped(groups)
             for _, item in ipairs(group.items) do
                 rowIndex = rowIndex + 1
                 local icon = GetItemIcon(item.itemID) or FALLBACK_ICON
-                local itemText = ("    |T%d:14|t %s x%d — %s"):format(
-                    icon, ColoredItemName(item.itemID), item.count, GetCoinTextureString(item.value))
-                if ahAvailable then
+                local itemText = ("    |T%d:14|t %s x%d"):format(
+                    icon, ColoredItemName(item.itemID), item.count)
+                if showVendor then
+                    itemText = itemText .. " — " .. GetCoinTextureString(item.value)
+                end
+                if ahShown then
                     itemText = itemText .. ("  %sAH: %s|r"):format(
                         AH_COLOR, item.auctionValue and GetCoinTextureString(item.auctionValue) or "—")
                 end
@@ -303,29 +328,33 @@ local function RenderTimeline()
     local sources = LT.GetSources and LT.GetSources()
     if not log then return 0 end
 
-    local ahAvailable = IsAddOnLoaded("Auctionator")
+    local ahShown = showAH and IsAddOnLoaded("Auctionator")
     local rowIndex = 0
     for i = #log, 1, -1 do
         local entry = log[i]
         local record = sources and sources[entry.kind .. ":" .. entry.id]
         local label = SourceLabel(record or { kind = entry.kind, id = entry.id })
-        local timeText = "|cff808080" .. date("%H:%M:%S", entry.time) .. "|r"
+        local prefix = showDateTime and ("|cff808080" .. date("%H:%M:%S", entry.time) .. "|r  ") or ""
 
         rowIndex = rowIndex + 1
         local row = AcquireRow(rowIndex)
         if entry.copper then
-            row.text:SetText(("%s  |TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s  |cff808080from|r %s"):format(
-                timeText, GetCoinTextureString(entry.copper), label))
+            row.text:SetText(("%s|TInterface\\Icons\\INV_Misc_Coin_01:14|t Currency — %s  |cff808080from|r %s"):format(
+                prefix, GetCoinTextureString(entry.copper), label))
         else
             local icon = GetItemIcon(entry.itemID) or FALLBACK_ICON
-            local value = ItemSellPrice(entry.itemID) * entry.count
-            local text = ("%s  |T%d:14|t %s x%d — %s  |cff808080from|r %s"):format(
-                timeText, icon, ColoredItemName(entry.itemID), entry.count, GetCoinTextureString(value), label)
-            if ahAvailable then
+            local text = ("%s|T%d:14|t %s x%d"):format(
+                prefix, icon, ColoredItemName(entry.itemID), entry.count)
+            if showVendor then
+                local value = ItemSellPrice(entry.itemID) * entry.count
+                text = text .. " — " .. GetCoinTextureString(value)
+            end
+            if ahShown then
                 local auctionValue = ItemAuctionValue(entry.itemID, entry.count)
                 text = text .. ("  %sAH: %s|r"):format(
                     AH_COLOR, auctionValue and GetCoinTextureString(auctionValue) or "—")
             end
+            text = text .. ("  |cff808080from|r %s"):format(label)
             row.text:SetText(text)
         end
     end
@@ -370,11 +399,18 @@ function Refresh()
     end
 
     content:SetHeight(rowIndex * ROW_HEIGHT)
-    local totalLine = "Total: " .. GetCoinTextureString(grandTotal)
-    if IsAddOnLoaded("Auctionator") then
+    local ahShown = showAH and IsAddOnLoaded("Auctionator")
+    local totalLine = "Total:"
+    if showVendor then
+        totalLine = totalLine .. " " .. GetCoinTextureString(grandTotal)
+    end
+    if ahShown then
         local known = grandItemCount == 0 or grandAhTotal > grandCopper or grandCopper > 0
         totalLine = totalLine .. ("   %sAH: %s|r"):format(
             AH_COLOR, known and GetCoinTextureString(grandAhTotal) or "—")
+    end
+    if not showVendor and not ahShown then
+        totalLine = totalLine .. " —"
     end
     totalText:SetText(totalLine)
 end
@@ -493,46 +529,79 @@ local function ResetWindowPosition()
     SaveLayout()
 end
 
--- Rendered as a plain button (not a menu checkbox) so it left-aligns
--- with the other entries; the checkmark is appended to the label instead.
-local function PinnedLabel()
-    local label = "Pin window (ignore Esc)"
-    if IsPinned() then
+-- Rendered as plain buttons (not menu checkboxes) so every entry
+-- left-aligns identically; the checkmark is appended to the label instead.
+local function CheckableLabel(label, checked)
+    if checked then
         label = label .. " |TInterface\\Buttons\\UI-CheckBox-Check:14|t"
     end
     return label
+end
+
+local function PinnedLabel()
+    return CheckableLabel("Pin window (ignore Esc)", IsPinned())
 end
 
 local function TogglePinned()
     SetPinned(not IsPinned())
 end
 
-local launcherMenu -- fallback dropdown host, created on demand
-local function OpenLauncherMenu(owner)
+local function ToggleShowVendor()
+    showVendor = not showVendor
+    SaveLayout()
+    Refresh()
+end
+
+local function ToggleShowAH()
+    showAH = not showAH
+    SaveLayout()
+    Refresh()
+end
+
+local function ToggleShowDateTime()
+    showDateTime = not showDateTime
+    SaveLayout()
+    Refresh()
+end
+
+-- Shared by the launcher icon's right-click menu and the in-window
+-- options button, so both stay in sync with a single definition.
+local optionsMenu -- fallback dropdown host, created on demand
+local function OpenOptionsMenu(owner)
     if MenuUtil and MenuUtil.CreateContextMenu then
         MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
             rootDescription:CreateTitle("LootTracker")
             rootDescription:CreateButton(PinnedLabel(), TogglePinned)
             rootDescription:CreateButton("Reset window size", ResetWindowSize)
             rootDescription:CreateButton("Reset window position", ResetWindowPosition)
+            rootDescription:CreateButton(CheckableLabel("Show vendor value", showVendor), ToggleShowVendor)
+            rootDescription:CreateButton(CheckableLabel("Show AH value", showAH), ToggleShowAH)
+            rootDescription:CreateButton(CheckableLabel("Show date/time", showDateTime), ToggleShowDateTime)
         end)
     elseif EasyMenu then
-        if not launcherMenu then
-            launcherMenu = CreateFrame("Frame", "LootTrackerLauncherMenu", UIParent, "UIDropDownMenuTemplate")
+        if not optionsMenu then
+            optionsMenu = CreateFrame("Frame", "LootTrackerOptionsMenu", UIParent, "UIDropDownMenuTemplate")
         end
         EasyMenu({
             { text = "LootTracker", isTitle = true, notCheckable = true },
             { text = PinnedLabel(), notCheckable = true, func = TogglePinned },
             { text = "Reset window size", notCheckable = true, func = ResetWindowSize },
             { text = "Reset window position", notCheckable = true, func = ResetWindowPosition },
-        }, launcherMenu, "cursor", 0, 0, "MENU")
+            { text = CheckableLabel("Show vendor value", showVendor), notCheckable = true, func = ToggleShowVendor },
+            { text = CheckableLabel("Show AH value", showAH), notCheckable = true, func = ToggleShowAH },
+            { text = CheckableLabel("Show date/time", showDateTime), notCheckable = true, func = ToggleShowDateTime },
+        }, optionsMenu, "cursor", 0, 0, "MENU")
     end
 end
+
+optionsButton:SetScript("OnClick", function(self)
+    OpenOptionsMenu(self)
+end)
 
 launcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 launcher:SetScript("OnClick", function(self, button)
     if button == "RightButton" then
-        OpenLauncherMenu(self)
+        OpenOptionsMenu(self)
     else
         ToggleWindow()
     end
@@ -563,6 +632,9 @@ function SaveLayout()
     local bPoint, _, bRelPoint, bx, by = launcher:GetPoint()
     ui.btnPoint, ui.btnRelPoint, ui.btnX, ui.btnY = bPoint, bRelPoint, bx, by
     ui.viewMode = viewMode
+    ui.showVendor = showVendor
+    ui.showAH = showAH
+    ui.showDateTime = showDateTime
 end
 
 -- Called from Core once saved variables are available.
@@ -589,6 +661,9 @@ function LT.ApplyLayout()
     if ui.viewMode == "timeline" or ui.viewMode == "grouped" then
         viewMode = ui.viewMode
     end
+    if ui.showVendor ~= nil then showVendor = ui.showVendor end
+    if ui.showAH ~= nil then showAH = ui.showAH end
+    if ui.showDateTime ~= nil then showDateTime = ui.showDateTime end
 end
 
 StaticPopupDialogs["LOOTTRACKER_RESET"] = {
