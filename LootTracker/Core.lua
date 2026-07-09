@@ -58,11 +58,12 @@ local npcNames = {}
 -- used to name GameObject loot sources.
 local lastObjectName, lastObjectTime = nil, 0
 
--- Snapshot of the open loot window: slot -> { itemID, sources }.
--- snapshotValid keeps the LOOT_READY + LOOT_OPENED double-fire from
--- rebuilding the same window's snapshot twice.
+-- Snapshot of the open loot window: slot -> { itemID, sources }. Must be
+-- rebuilt on every LOOT_READY, not just the first: the game renumbers
+-- remaining slots as items are cleared (slot 2 becomes slot 1, etc.) and
+-- refires LOOT_READY each time, so a stale snapshot silently mismatches
+-- slot indices to the wrong (or no) pending entry.
 local pending = {}
-local snapshotValid = false
 
 -- Spawn GUIDs already credited this session, so re-opening the same
 -- corpse can't bump a source's loot counter twice.
@@ -329,14 +330,10 @@ eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "LOOT_READY" or event == "LOOT_OPENED" then
-        if not snapshotValid then
-            SnapshotLoot()
-            snapshotValid = true
-        end
+        SnapshotLoot()
     elseif event == "LOOT_SLOT_CLEARED" then
         QueueSlot(...)
     elseif event == "LOOT_CLOSED" then
-        snapshotValid = false
         wipe(pending)
     elseif event == "CHAT_MSG_LOOT" then
         OnLootMessage(...)
