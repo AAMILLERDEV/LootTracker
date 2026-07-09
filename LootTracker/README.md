@@ -6,11 +6,13 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 
 ## What it does
 
-- **Groups your loot by source.** Every mob you kill and loot gets its own entry, with all its drops stacked together — kill 40 kobolds and you'll see one "Kobold Miner" group with everything they dropped and how many times you've looted them.
+- **Groups your loot by source.** Every mob you kill and loot gets its own entry, with all its drops stacked together — kill 40 kobolds and you'll see one "Kobold Miner" group with everything they dropped, how many times you've looted them, and its own item icons.
 - **Tracks gathering too.** Mining veins, herbs, and chests get their own `(node)` entries, so you can see what that hour of ore farming actually produced.
 - **Shows coin drops.** Money looted from mobs appears as a **Currency** line inside each group.
 - **Adds it all up.** Every item shows its vendor sell value, every group shows its combined worth, and the bottom of the window shows the grand total for your session. (Vendor prices only — no auction house estimates.)
+- **Two ways to browse.** Switch between a **grouped** view (loot stacked by source) and a **timeline** view (a chronological, newest-first log of every pickup) with one click.
 - **Counts only *your* loot.** If a party member picks something up, it doesn't get counted. Only what actually enters your bags is tracked.
+- **Resize and reposition freely.** The window and the launcher button both remember where you left them, per character.
 - Your data is saved **per character** and survives logging out.
 
 ## Getting started
@@ -29,6 +31,8 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 | Open or close the tracker | Click the bag icon, or type `/lt` |
 | See what one mob dropped | Click its name to expand or collapse it |
 | Collapse or expand the whole list | Click **Collapse All** / **Expand All** at the top |
+| See loot in the order you picked it up | Click **Timeline View** at the top |
+| Go back to loot grouped by source | Click **Grouped View** at the top |
 | Start fresh | Click **Reset** (bottom left) or type `/lt reset` |
 | Move the window or bag icon | Drag it anywhere with the left mouse button |
 | Make the window bigger or smaller | Drag the grip in the bottom-right corner |
