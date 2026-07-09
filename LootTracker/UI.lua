@@ -44,23 +44,16 @@ frame:SetMovable(true)
 frame:SetResizable(true)
 
 -- Cap the window at roughly half the screen (60% x 80% ≈ half the area).
+-- Computed fresh wherever it's needed (ApplyLayout, the manual resize
+-- drag below) instead of cached via SetResizeBounds, so it's always
+-- current with no separate refresh-on-event bookkeeping required.
 local function MaxFrameSize()
     return UIParent:GetWidth() * 0.6, UIParent:GetHeight() * 0.8
 end
 
-local function UpdateResizeBounds()
-    local maxW, maxH = MaxFrameSize()
-    if frame.SetResizeBounds then
-        frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, maxW, maxH)
-    else
-        frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
-        frame:SetMaxResize(maxW, maxH)
-    end
+local function Clamp(value, lo, hi)
+    return math.min(math.max(value, lo), hi)
 end
-UpdateResizeBounds()
-frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
-frame:RegisterEvent("UI_SCALE_CHANGED")
-frame:SetScript("OnEvent", UpdateResizeBounds)
 
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
@@ -107,60 +100,73 @@ sizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
 sizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 sizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
 
--- StartSizing tracks the cursor live, so calling it immediately on
--- mouse-down makes the window visibly wobble with the small, involuntary
--- cursor movement of an ordinary click (mouse-down and mouse-up are
--- essentially never at the exact same pixel). Wait for the cursor to
--- clear a small threshold before starting the resize at all, so a plain
--- click never moves the window, not even momentarily.
+-- Resized by hand — tracking raw cursor movement and calling SetSize
+-- directly — instead of Frame:StartSizing/StopMovingOrSizing. That native
+-- API tracks the cursor independently of the mouse button and needs the
+-- frame corner-anchored to behave predictably; on this window (anchored
+-- via SetPoint("CENTER")) it kept producing a visible size jump,
+-- specifically after other UI interactions (e.g. the options menu) moved
+-- the cursor before a later resize drag, that survived multiple attempts
+-- to patch around it. Doing it ourselves removes that opaque state
+-- entirely: the only state involved is the plain Lua locals below.
 local CLICK_DRAG_THRESHOLD = 3 -- screen pixels
-local dragStartX, dragStartY
+local resizeScale, resizeStartCursorX, resizeStartCursorY, resizeStartWidth, resizeStartHeight
 local sizing = false
 
 local function StopSizing()
     if sizing then
-        frame:StopMovingOrSizing()
-        sizing = false
         SaveLayout()
     end
+    sizing = false
     sizeGrip:SetScript("OnUpdate", nil)
-    dragStartX, dragStartY = nil, nil
+    resizeStartCursorX, resizeStartCursorY = nil, nil
 end
 
 sizeGrip:SetScript("OnMouseDown", function(self)
-    -- Defensively close out any resize left dangling from a previous
-    -- cycle before starting a new one. StartSizing keeps tracking the
-    -- cursor until something calls StopMovingOrSizing — it isn't tied to
-    -- the mouse button — so if that ever failed to run (e.g. the window
-    -- got hidden mid-drag), the frame stays silently latched onto the
-    -- cursor and only visibly "jumps" once the cursor moves again.
-    -- StopMovingOrSizing is a harmless no-op if nothing was in progress.
-    frame:StopMovingOrSizing()
+    resizeScale = frame:GetEffectiveScale()
+    local cursorX, cursorY = GetCursorPosition()
+    resizeStartCursorX, resizeStartCursorY = cursorX / resizeScale, cursorY / resizeScale
+    resizeStartWidth, resizeStartHeight = frame:GetWidth(), frame:GetHeight()
     sizing = false
-    dragStartX, dragStartY = GetCursorPosition()
     -- Sizing must end when the mouse button does, even if the release
-    -- lands off the grip (easy after overshooting a size bound). If it
-    -- didn't, the frame would keep resizing toward the cursor and "jump"
-    -- on the next click anywhere in the UI.
+    -- lands off the grip (easy after overshooting a size bound) — this
+    -- poll catches that regardless of where the cursor ends up.
     self:SetScript("OnUpdate", function()
         if not IsMouseButtonDown("LeftButton") then
             StopSizing()
             return
         end
+        local cursorX2, cursorY2 = GetCursorPosition()
+        cursorX2, cursorY2 = cursorX2 / resizeScale, cursorY2 / resizeScale
+        local dx = cursorX2 - resizeStartCursorX
+        local dy = resizeStartCursorY - cursorY2 -- screen Y grows upward; height grows as the cursor moves down
         if not sizing then
-            local cursorX, cursorY = GetCursorPosition()
-            if abs(cursorX - dragStartX) > CLICK_DRAG_THRESHOLD or abs(cursorY - dragStartY) > CLICK_DRAG_THRESHOLD then
-                sizing = true
-                frame:StartSizing("BOTTOMRIGHT")
+            -- Wait for real drag intent before touching the frame at
+            -- all, so a plain click never moves the window, not even
+            -- momentarily.
+            if abs(dx) <= CLICK_DRAG_THRESHOLD and abs(dy) <= CLICK_DRAG_THRESHOLD then
+                return
             end
+            sizing = true
+            -- Re-anchor to the current TOPLEFT corner so the growth
+            -- below expands away from it, matching "drag the
+            -- bottom-right grip" regardless of the window's actual
+            -- anchor point.
+            local left, top = frame:GetLeft(), frame:GetTop()
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
         end
+        local maxW, maxH = MaxFrameSize()
+        frame:SetSize(
+            Clamp(resizeStartWidth + dx, MIN_WIDTH, maxW),
+            Clamp(resizeStartHeight + dy, MIN_HEIGHT, maxH))
     end)
 end)
 sizeGrip:SetScript("OnMouseUp", StopSizing)
 -- If the window closes mid-resize (Esc, toggling it off, etc.) with the
 -- mouse still down, sizeGrip's OnUpdate stops firing along with it (a
 -- hidden frame's OnUpdate doesn't run), so StopSizing would otherwise
--- never get called and the resize is left dangling — see above.
+-- never get called and the drag stays "armed" for next time.
 frame:HookScript("OnHide", StopSizing)
 
 -- Just "Total: X" at a glance; the vendor/AH breakdown (when those
@@ -720,9 +726,7 @@ function LT.ApplyLayout()
     end
     if ui.width and ui.height then
         local maxW, maxH = MaxFrameSize()
-        frame:SetSize(
-            math.min(math.max(ui.width, MIN_WIDTH), maxW),
-            math.min(math.max(ui.height, MIN_HEIGHT), maxH))
+        frame:SetSize(Clamp(ui.width, MIN_WIDTH, maxW), Clamp(ui.height, MIN_HEIGHT, maxH))
     end
     if ui.btnPoint then
         launcher:ClearAllPoints()
