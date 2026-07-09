@@ -49,6 +49,17 @@ AddLootPattern(LOOT_ITEM_SELF)
 -- Only trust the last gathering cast target as a node name for this long.
 local OBJECT_NAME_WINDOW = 15
 
+-- Temporary diagnostics for the "loot sometimes goes untracked" report.
+-- Prints only at the exact points where a loot event could vanish
+-- silently, so a repro tells us which path is actually firing instead
+-- of guessing. Safe to remove once the cause is confirmed.
+local DEBUG = true
+local function Debug(msg)
+    if DEBUG then
+        print("|cff33ff99LootTracker debug:|r " .. msg)
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 
 -- npcID -> name, learned from combat log deaths this session
@@ -73,6 +84,28 @@ local function InitDB()
     LootTrackerDB = LootTrackerDB or {}
     LootTrackerDB.sources = LootTrackerDB.sources or {}
     LootTrackerDB.ui = LootTrackerDB.ui or {}
+    LootTrackerDB.log = LootTrackerDB.log or {}
+end
+
+-- Chronological loot log, capped so a long session can't grow it forever.
+-- Names aren't stored here — the timeline view resolves them live from
+-- LootTrackerDB.sources, so a name learned later (see CacheNpcName)
+-- automatically applies to earlier log entries too.
+local MAX_LOG_ENTRIES = 500
+
+local function LogEvent(kind, id, itemID, count, copper)
+    local log = LootTrackerDB.log
+    log[#log + 1] = {
+        time = time(),
+        kind = kind,
+        id = id,
+        itemID = itemID,
+        count = count,
+        copper = copper,
+    }
+    if #log > MAX_LOG_ENTRIES then
+        tremove(log, 1)
+    end
 end
 
 -- GUID layout: Type-0-server-instance-zone-ID-spawn. Creatures group as
@@ -161,10 +194,30 @@ local function CollectSlotSources(slot, fallbackQuantity)
     if quantitySum == 0 and sources[1] then
         sources[1].quantity = fallbackQuantity
     end
+    -- GetLootSourceInfo occasionally returns nothing usable (seen under
+    -- back-to-back kills), which would otherwise drop the item entirely
+    -- with no error. A loot window is almost always opened on its
+    -- corpse as your current target, so fall back to that GUID.
+    if #sources == 0 then
+        local targetGUID = UnitGUID("target")
+        if targetGUID and ParseGUID(targetGUID) then
+            sources[1] = { guid = targetGUID, quantity = fallbackQuantity }
+            Debug(("slot %d: GetLootSourceInfo empty, used target GUID fallback"):format(slot))
+        else
+            Debug(("slot %d: GetLootSourceInfo empty AND no usable target — source lost"):format(slot))
+        end
+    end
     return sources
 end
 
 local function SnapshotLoot()
+    if next(pending) then
+        local target = UnitGUID("target") or "no target"
+        local count = 0
+        for _ in pairs(pending) do count = count + 1 end
+        Debug(("SnapshotLoot: wiping %d unconsumed pending entr%s (current target %s)")
+            :format(count, count == 1 and "y" or "ies", target))
+    end
     wipe(pending)
     for slot = 1, GetNumLootItems() do
         local slotType = GetLootSlotType(slot)
@@ -175,6 +228,8 @@ local function SnapshotLoot()
                 local sources = CollectSlotSources(slot, quantity)
                 if #sources > 0 then
                     pending[slot] = { itemID = itemID, sources = sources }
+                else
+                    Debug(("slot %d: item %d dropped, no sources resolved"):format(slot, itemID))
                 end
             end
         elseif slotType == LOOT_TYPE_MONEY then
@@ -184,6 +239,8 @@ local function SnapshotLoot()
                 local sources = CollectSlotSources(slot, copper)
                 if #sources > 0 then
                     pending[slot] = { money = true, sources = sources }
+                else
+                    Debug(("slot %d: %d copper dropped, no sources resolved"):format(slot, copper))
                 end
             end
         end
@@ -231,8 +288,14 @@ local function RecordEntry(entry, copperReceived)
                 local credit = floor(idealSum + 0.5) - creditedSum
                 creditedSum = creditedSum + credit
                 record.copper = (record.copper or 0) + credit
+                if credit > 0 then
+                    LogEvent(kind, id, nil, nil, credit)
+                end
             else
                 record.items[entry.itemID] = (record.items[entry.itemID] or 0) + source.quantity
+                if source.quantity > 0 then
+                    LogEvent(kind, id, entry.itemID, source.quantity)
+                end
             end
             if not seenGUIDs[source.guid] then
                 seenGUIDs[source.guid] = true
@@ -248,8 +311,13 @@ end
 
 local function QueueSlot(slot)
     local entry = pending[slot]
-    if not entry then return end
+    if not entry then
+        Debug(("QueueSlot: slot %d cleared but no pending entry — loot lost"):format(slot))
+        return
+    end
     pending[slot] = nil
+    Debug(("QueueSlot: slot %d recording %s"):format(
+        slot, entry.money and (entry.copper or "money") or ("item " .. tostring(entry.itemID))))
     -- Solo, nobody else can take slots out of our loot window, so the
     -- cleared slot alone proves the loot reached our bags. Only group
     -- loot needs the chat-message confirmation step.
@@ -306,9 +374,14 @@ function LT.GetSources()
     return LootTrackerDB and LootTrackerDB.sources
 end
 
+function LT.GetLog()
+    return LootTrackerDB and LootTrackerDB.log
+end
+
 function LT.ResetData()
     if LootTrackerDB then
         wipe(LootTrackerDB.sources)
+        wipe(LootTrackerDB.log)
     end
     wipe(seenGUIDs)
     if LT.RefreshUI then
@@ -330,10 +403,23 @@ eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "LOOT_READY" or event == "LOOT_OPENED" then
+        Debug(event .. " target=" .. tostring(UnitGUID("target")) .. " items=" .. tostring(GetNumLootItems()))
         SnapshotLoot()
     elseif event == "LOOT_SLOT_CLEARED" then
+        Debug("LOOT_SLOT_CLEARED slot=" .. tostring(...))
         QueueSlot(...)
     elseif event == "LOOT_CLOSED" then
+        Debug("LOOT_CLOSED")
+        -- Some loot flows (seen with single-item auto-loot) close the
+        -- window without ever firing LOOT_SLOT_CLEARED; the confirming
+        -- "You receive loot" chat message still arrives a moment later.
+        -- Queue anything still pending for that confirmation instead of
+        -- discarding it outright.
+        for slot, entry in pairs(pending) do
+            entry.time = GetTime()
+            unconfirmed[#unconfirmed + 1] = entry
+            Debug(("LOOT_CLOSED: slot %d never cleared, queued for chat confirmation"):format(slot))
+        end
         wipe(pending)
     elseif event == "CHAT_MSG_LOOT" then
         OnLootMessage(...)
