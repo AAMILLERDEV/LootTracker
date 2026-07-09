@@ -57,7 +57,7 @@ local OBJECT_NAME_WINDOW = 15
 local DEBUG = false
 local function Debug(msg)
     if DEBUG then
-        print("|cff33ff99LootTracker debug:|r " .. msg)
+        print("|cff33ff99LootTrackerTBC debug:|r " .. msg)
     end
 end
 

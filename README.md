@@ -1,6 +1,6 @@
-# LootTracker
+# LootTrackerTBC
 
-Ever wanted a clean view of all the loot you collected during your gold farming sessions? **LootTracker** keeps a running tally of everything you loot — organized by the NPC or gathering node it came from — and shows you what it's all worth at a vendor.
+Ever wanted a clean view of all the loot you collected during your gold farming sessions? **LootTrackerTBC** keeps a running tally of everything you loot — organized by the NPC or gathering node it came from — and shows you what it's all worth at a vendor.
 
 For **World of Warcraft: TBC Anniversary (2.5.6)**.
 
@@ -10,7 +10,7 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 - **Tracks gathering too.** Mining veins, herbs, and chests get their own `(node)` entries, so you can see what that hour of ore farming actually produced.
 - **Shows coin drops.** Money looted from mobs appears as a **Currency** line inside each group.
 - **Adds it all up.** Every group shows its combined worth, and the bottom of the window shows the grand total for your session — using the AH price where one's known and falling back to the vendor price otherwise, plus any coin looted, so it's the best single estimate of what a session was actually worth.
-- **Auction house values, if you have Auctionator.** With [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, every item can also show its raw AH price alongside its vendor price (both are optional columns — see Options below). No Auctionator? LootTracker works exactly the same, just without that column, and the grand total quietly falls back to vendor pricing.
+- **Auction house values, if you have Auctionator.** With [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, every item can also show its raw AH price alongside its vendor price (both are optional columns — see Options below). No Auctionator? LootTrackerTBC works exactly the same, just without that column, and the grand total quietly falls back to vendor pricing.
 - **Two ways to browse.** Switch between a **grouped** view (loot stacked by source) and a **timeline** view (a chronological, newest-first log of every pickup) with one click.
 - **Counts only *your* loot.** If a party member picks something up, it doesn't get counted. Only what actually enters your bags is tracked.
 - **Resize and reposition freely.** The window and the launcher button both remember where you left them, per character.
@@ -18,11 +18,11 @@ For **World of Warcraft: TBC Anniversary (2.5.6)**.
 
 ## Getting started
 
-1. Copy the `LootTracker` folder into:
+1. Copy the `LootTrackerTBC` folder into:
    ```
    World of Warcraft\_anniversary_\Interface\AddOns\
    ```
-2. Enable **LootTracker** in the AddOns list on the character select screen.
+2. Enable **LootTrackerTBC** in the AddOns list on the character select screen.
 
 ## How to use it
 
@@ -51,7 +51,7 @@ Click the gear icon in the top-left of the window, or right-click the bag icon �
 - **Show vendor value** — show or hide the raw vendor sell-price breakdown alongside the main total.
 - **Show AH value** — show or hide the raw Auctionator price breakdown alongside the main total.
 - **Show date/time** — toggle the timestamp shown on each entry in Timeline View.
-- **Reset all data** — wipes everything LootTracker has recorded, after confirming.
+- **Reset all data** — wipes everything LootTrackerTBC has recorded, after confirming.
 
 ## Good to know
 

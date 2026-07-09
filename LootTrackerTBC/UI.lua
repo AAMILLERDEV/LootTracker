@@ -72,7 +72,7 @@ tinsert(UISpecialFrames, "LootTrackerFrame")
 -- view toggle row.
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOP", 0, -16)
-title:SetText("LootTracker")
+title:SetText("LootTrackerTBC")
 
 local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
 closeButton:SetPoint("TOPRIGHT", -6, -6)
@@ -86,7 +86,7 @@ optionsButton:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
 optionsButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
 optionsButton:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("LootTracker Options")
+    GameTooltip:AddLine("LootTrackerTBC Options")
     GameTooltip:Show()
 end)
 optionsButton:SetScript("OnLeave", function()
@@ -562,7 +562,7 @@ launcher:RegisterForDrag("LeftButton")
 
 local launcherIcon = launcher:CreateTexture(nil, "ARTWORK")
 launcherIcon:SetAllPoints()
-launcherIcon:SetTexture("Interface\\AddOns\\LootTracker\\Media\\LootTracker-icon.png")
+launcherIcon:SetTexture("Interface\\AddOns\\LootTrackerTBC\\Media\\LootTracker-icon.png")
 launcher:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
 -- Pinning removes the frame from UISpecialFrames so Esc no longer
@@ -643,7 +643,7 @@ local optionsMenu -- fallback dropdown host, created on demand
 local function OpenOptionsMenu(owner)
     if MenuUtil and MenuUtil.CreateContextMenu then
         MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
-            rootDescription:CreateTitle("LootTracker")
+            rootDescription:CreateTitle("LootTrackerTBC")
             rootDescription:CreateButton(PinnedLabel(), TogglePinned)
             rootDescription:CreateButton("Reset window size", ResetWindowSize)
             rootDescription:CreateButton("Reset window position", ResetWindowPosition)
@@ -659,7 +659,7 @@ local function OpenOptionsMenu(owner)
             optionsMenu = CreateFrame("Frame", "LootTrackerOptionsMenu", UIParent, "UIDropDownMenuTemplate")
         end
         EasyMenu({
-            { text = "LootTracker", isTitle = true, notCheckable = true },
+            { text = "LootTrackerTBC", isTitle = true, notCheckable = true },
             { text = PinnedLabel(), notCheckable = true, func = TogglePinned },
             { text = "Reset window size", notCheckable = true, func = ResetWindowSize },
             { text = "Reset window position", notCheckable = true, func = ResetWindowPosition },
@@ -692,7 +692,7 @@ launcher:SetScript("OnDragStop", function(self)
 end)
 launcher:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("LootTracker")
+    GameTooltip:AddLine("LootTrackerTBC")
     GameTooltip:AddLine("Click to toggle the loot window.", 1, 1, 1)
     GameTooltip:AddLine("Right-click for options.", 1, 1, 1)
     GameTooltip:AddLine("Drag to move this button.", 1, 1, 1)
@@ -744,7 +744,7 @@ function LT.ApplyLayout()
 end
 
 StaticPopupDialogs["LOOTTRACKER_RESET"] = {
-    text = "Reset all LootTracker data?",
+    text = "Reset all LootTrackerTBC data?",
     button1 = YES,
     button2 = NO,
     OnAccept = function()
