@@ -1,64 +1,60 @@
 # LootTrackerTBC
 
-Ever wanted a clean view of all the loot you collected during your gold farming sessions? **LootTrackerTBC** keeps a running tally of everything you loot — organized by the NPC or gathering node it came from — and shows you what it's all worth at a vendor.
-
-For **World of Warcraft: TBC Anniversary (2.5.6)**.
+Tracks everything you loot — grouped by source, item, or disenchant result — and shows what it's worth. For **World of Warcraft: TBC Anniversary (2.5.6)**.
 
 ## What it does
 
-- **Groups your loot by source.** Every mob you kill and loot gets its own entry, with all its drops stacked together — kill 40 kobolds and you'll see one "Kobold Miner" group with everything they dropped, how many times you've looted them, and its own item icons.
-- **Tracks gathering too.** Mining veins, herbs, and chests get their own `(node)` entries, so you can see what that hour of ore farming actually produced.
-- **Shows coin drops.** Money looted from mobs appears as a **Currency** line inside each group.
-- **Adds it all up.** Every group shows its combined worth, and the bottom of the window shows the grand total for your session — using the AH price where one's known and falling back to the vendor price otherwise, plus any coin looted, so it's the best single estimate of what a session was actually worth.
-- **Auction house values, if you have Auctionator.** With [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, every item can also show its raw AH price alongside its vendor price (both are optional columns — see Options below). No Auctionator? LootTrackerTBC works exactly the same, just without that column, and the grand total quietly falls back to vendor pricing.
-- **Two ways to browse.** Switch between a **grouped** view (loot stacked by source) and a **timeline** view (a chronological, newest-first log of every pickup, each entry showing its timestamp and source above the item so long names don't run together) with one click.
-- **Counts only *your* loot.** If a party member picks something up, it doesn't get counted. Only what actually enters your bags is tracked.
-- **Resize and reposition freely.** The window and the launcher button both remember where you left them, per character.
-- Your data is saved **per character** and survives logging out.
+- **Groups loot by source.** Every mob, gathering node, and disenchanted item gets its own entry with its combined value and item breakdown.
+- **Three ways to view it.** Grouped (by source), Item (aggregated across all sources), or Timeline (a chronological log). Cycle between them with one button.
+- **Disenchant tracking.** Items you disenchant show up as their own "Disenchanted: `<item>`" group, same as any mob or node. A **"Show disenchants only"** toggle scopes any view down to just those.
+- **Auction house values, if you have Auctionator.** With [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, items show AH price alongside vendor price and the grand total blends the two. No Auctionator (or it's disabled)? Everything still works, just without that column — and you'll get a note if it's installed but disabled rather than values silently vanishing.
+- **Multiple sessions.** Start a new session anytime without losing the last one, then switch between past sessions to compare runs — no more wiping everything just to isolate a farming run.
+- **Gold/hr**, shown alongside the vendor/AH breakdown when you hover the total.
+- **Hide items you don't care about.** Right-click any item to exclude it from lists and totals everywhere; manage what's hidden from the options menu.
+- **Counts only your loot.** Group-loot rolls you don't win, and other players' pickups, aren't counted.
+- Everything is saved **per character** and survives logging out.
 
 ## Getting started
 
-1. Copy the `LootTrackerTBC` folder into:
-   ```
-   World of Warcraft\_anniversary_\Interface\AddOns\
-   ```
-2. Enable **LootTrackerTBC** in the AddOns list on the character select screen.
+1. Copy the `LootTrackerTBC` folder into `World of Warcraft\_anniversary_\Interface\AddOns\`.
+2. Enable **LootTrackerTBC** in the AddOns list at character select.
 
-## How to use it
+## Using it
 
 | I want to... | Do this |
 | --- | --- |
 | Open or close the tracker | Click the bag icon, or type `/lt` |
-| See what one mob dropped | Click its name to expand or collapse it |
-| Collapse or expand the whole list | Click **Collapse All** / **Expand All** at the top |
-| See loot in the order you picked it up | Click **Timeline View** at the top |
-| Go back to loot grouped by source | Click **Grouped View** at the top |
-| Start fresh | Type `/lt reset`, or use **Reset all data** in the options menu |
-| Open the options menu | Click the gear icon (top left), or right-click the bag icon |
-| See a breakdown of the total | Hover over **Total** at the bottom of the window |
-| Move the window or bag icon | Drag it anywhere with the left mouse button |
-| Make the window bigger or smaller | Drag the grip in the bottom-right corner |
+| Switch between Grouped / Item / Timeline | Click the view button at the top |
+| Expand or collapse one group | Click its name |
+| Collapse or expand everything | **Collapse All** / **Expand All** |
+| See only what you've disenchanted | Options > **Show disenchants only** |
+| Hide an item | Right-click it |
+| Manage hidden items | Options > **Manage Hidden Items** |
+| Start a new session | Click the session button > **Start New Session...** |
+| View a past session | Click the session button and pick one |
+| Reset or delete a session | Options — label reads **Reset current session** or **Delete this session** depending on which you're viewing |
+| See the value/gold-per-hour breakdown | Hover **Total** |
+| Open the options menu | Gear icon, or right-click the bag icon |
+| Move or resize the window | Drag it, or drag the bottom-right grip |
 
-The list sorts itself by value, so your most profitable targets are always at the top.
+The list sorts itself by value, so your most profitable sources are always at the top.
 
 ### Options
 
-Click the gear icon in the top-left of the window, or right-click the bag icon — both open the same menu:
+Click the gear icon (top-left of the window), or right-click the bag icon:
 
-- **Pin window (ignore Esc)** — normally the Esc key closes the tracker like any other window. Pin it and it stays open (handy while farming).
-- **Reset window size** — snaps the window back to its original size.
-- **Reset window position** — brings the window back to the center of the screen, in case it wanders off somewhere unhelpful.
-- **Show vendor value** — show or hide the raw vendor sell-price breakdown alongside the main total.
-- **Show AH value** — show or hide the raw Auctionator price breakdown alongside the main total.
-- **Show date/time** — toggle the timestamp shown on each entry in Timeline View.
-- **Reset all data** — wipes everything LootTrackerTBC has recorded, after confirming.
+- **Pin window (ignore Esc)** — keeps the tracker open through Esc, handy while farming.
+- **Reset window size / position**
+- **Show vendor value / Show AH value / Show date-time** — toggle those columns.
+- **Show disenchants only** — scope every view to disenchant results.
+- **Manage Hidden Items** — browse and unhide anything you've hidden.
+- **Reset current session / Delete this session** — wording depends on whether you're viewing the live session or a past one.
 
 ## Good to know
 
-- Items you win from **group loot rolls** aren't attributed — the tracker records loot you take directly from a loot window.
-- **Pickpocketed** loot counts (it comes from an NPC, after all).
-- **Crafting doesn't count.** Only drops and gathering — creating items at a forge won't inflate your numbers.
-- A mob may briefly appear as `NPC #1234` if its name isn't known yet; it fills in as you keep playing.
-- Newly seen items may take a moment to show their name and price while the game fetches item data.
+- **Group-loot rolls** you don't win aren't counted; **pickpocketing** and **gathering** are.
+- **Crafting doesn't count** — only drops, gathering, and disenchanting.
+- A mob may briefly show as `NPC #1234` until its name is known.
+- Newly seen items may take a moment to show their name and price.
 
-Please feel free to provide as much feedback as possible. Whether it's bug fixes, concerns, likes or dislikes! I'm happy to discuss possible improvements as well, as I'm always looking to improve my work. 
+Feedback welcome — bugs, likes, dislikes, all of it. I'm always looking to improve this.
