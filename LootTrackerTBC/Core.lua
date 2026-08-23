@@ -49,16 +49,42 @@ AddLootPattern(LOOT_ITEM_SELF)
 -- Only trust the last gathering cast target as a node name for this long.
 local OBJECT_NAME_WINDOW = 15
 
+-- Enchanting's "Disenchant" spell has several rank IDs in TBC-era clients
+-- (13262/13920/13921/13922 as learned/upgraded); GetSpellInfo returns the
+-- same localized base name for all of them regardless of rank, so casts
+-- are matched by name instead of enumerating every rank ID.
+local DISENCHANT_SPELL_NAME = GetSpellInfo(13262)
+-- A disenchant loot window's own GetLootSourceInfo GUID ("Item-<n>-0-<id>")
+-- is USELESS for identifying what was disenchanted: confirmed via a live
+-- repro that <n> is some internal quality/ilvl loot-bracket id, not the
+-- original item's itemID (disenchant tables are shared across many items
+-- of the same bracket) — so there is nothing to parse out of it. Instead,
+-- the target item is captured off ITEM_LOCKED at cast time (see
+-- pendingDisenchantItemID below) and carried into the loot window via
+-- lastDisenchantItemID once the cast is confirmed.
+-- Only treat a loot window as a disenchant result if it opens this soon
+-- after the cast completes; otherwise it's a coincidental unrelated loot
+-- window (e.g. a corpse) and must NOT be misattributed.
+local DISENCHANT_WINDOW = 3
+
 -- Diagnostics for the "loot sometimes goes untracked" class of report.
 -- Prints only at the exact points where a loot event could vanish
 -- silently, so a repro tells us which path is actually firing instead
--- of guessing. Off by default for release; flip to true (or expose a
--- /lt debug toggle) when chasing a report like that.
+-- of guessing. Off by default; toggle at runtime with /lt debug.
 local DEBUG = false
 local function Debug(msg)
     if DEBUG then
         print("|cff33ff99LootTrackerTBC debug:|r " .. msg)
     end
+end
+
+function LT.SetDebug(enabled)
+    DEBUG = enabled and true or false
+    print(("|cff33ff99LootTrackerTBC:|r debug logging %s"):format(DEBUG and "ON" or "OFF"))
+end
+
+function LT.IsDebug()
+    return DEBUG
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -70,6 +96,21 @@ local npcNames = {}
 -- used to name GameObject loot sources.
 local lastObjectName, lastObjectTime = nil, 0
 
+-- GetTime() of the player's last completed Disenchant cast, and the
+-- itemID it targeted. The itemID starts nil at cast-success time and is
+-- filled in retroactively by the ITEM_LOCKED that follows (confirmed via
+-- a live repro that the item only locks AFTER the cast succeeds, as a
+-- side effect of being consumed — not picked as a target beforehand).
+-- See DISENCHANT_WINDOW.
+local lastDisenchantTime = 0
+local lastDisenchantItemID = nil
+local function IsRecentDisenchant()
+    return (GetTime() - lastDisenchantTime) <= DISENCHANT_WINDOW
+end
+
+---@diagnostic disable-next-line: deprecated
+local GetContainerItemID = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
+
 -- Snapshot of the open loot window: slot -> { itemID, sources }. Must be
 -- rebuilt on every LOOT_READY, not just the first: the game renumbers
 -- remaining slots as items are cleared (slot 2 becomes slot 1, etc.) and
@@ -78,24 +119,54 @@ local lastObjectName, lastObjectTime = nil, 0
 local pending = {}
 
 -- Spawn GUIDs already credited this session, so re-opening the same
--- corpse can't bump a source's loot counter twice.
+-- corpse can't bump a source's loot counter twice. Deliberately NOT
+-- reset by a session split (LT.StartNewSession) — its job is just to
+-- stop a still-open corpse from being double-counted, unrelated to the
+-- user-facing "farming session" boundaries in LootTrackerDB.sessions.
 local seenGUIDs = {}
 
 local function InitDB()
     LootTrackerDB = LootTrackerDB or {}
-    LootTrackerDB.sources = LootTrackerDB.sources or {}
     LootTrackerDB.ui = LootTrackerDB.ui or {}
-    LootTrackerDB.log = LootTrackerDB.log or {}
+    LootTrackerDB.filters = LootTrackerDB.filters or {}
+    LootTrackerDB.filters.hiddenItems = LootTrackerDB.filters.hiddenItems or {}
+
+    if not LootTrackerDB.sessions then
+        -- Fresh install, or upgrading from the pre-session schema where
+        -- sources/log lived at the DB root — migrate that data into the
+        -- first session instead of discarding it.
+        LootTrackerDB.sessions = {
+            {
+                name = nil,
+                startTime = time(),
+                sources = LootTrackerDB.sources or {},
+                log = LootTrackerDB.log or {},
+            },
+        }
+        LootTrackerDB.sources = nil
+        LootTrackerDB.log = nil
+    end
+end
+
+-- The session currently being written to by live loot tracking — always
+-- the last entry in LootTrackerDB.sessions. Distinct from whichever
+-- session the UI happens to be *viewing* (see UI.lua's viewedSessionIndex),
+-- so looking at a past session doesn't interrupt live tracking.
+local function GetActiveSession()
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    return sessions and sessions[#sessions]
 end
 
 -- Chronological loot log, capped so a long session can't grow it forever.
 -- Names aren't stored here — the timeline view resolves them live from
--- LootTrackerDB.sources, so a name learned later (see CacheNpcName)
+-- the session's sources, so a name learned later (see CacheNpcName)
 -- automatically applies to earlier log entries too.
 local MAX_LOG_ENTRIES = 500
 
 local function LogEvent(kind, id, itemID, count, copper)
-    local log = LootTrackerDB.log
+    local session = GetActiveSession()
+    if not session then return end
+    local log = session.log
     log[#log + 1] = {
         time = time(),
         kind = kind,
@@ -109,11 +180,20 @@ local function LogEvent(kind, id, itemID, count, copper)
     end
 end
 
--- GUID layout: Type-0-server-instance-zone-ID-spawn. Creatures group as
--- NPCs, GameObjects as gathering nodes; every other type (Item GUIDs from
--- disenchanting/containers, Player, etc.) is deliberately untracked.
+-- Real GUID layout: Type-0-server-instance-zone-ID-spawn. Creatures group
+-- as NPCs, GameObjects as gathering nodes; every other real type (Item —
+-- see the DISENCHANT_WINDOW comment on why that one's useless, Player,
+-- etc.) is deliberately untracked. "Disenchant-<itemID>" is NOT a real
+-- WoW GUID — it's a sentinel CollectSlotSources synthesizes for disenchant
+-- loot windows once the target item is known by other means, recognized
+-- here so the rest of the crediting pipeline (RecordEntry, GetSourceRecord)
+-- can treat it exactly like any other source without special-casing it.
 local function ParseGUID(guid)
     if not guid then return end
+    local disenchantItemID = guid:match("^Disenchant%-(%d+)$")
+    if disenchantItemID then
+        return "disenchant", tonumber(disenchantItemID)
+    end
     local unitType, _, _, _, _, idText = strsplit("-", guid)
     local id = tonumber(idText)
     if not id then return end
@@ -137,11 +217,13 @@ local function ResolveName(kind, id)
 end
 
 local function GetSourceRecord(kind, id)
+    local session = GetActiveSession()
+    if not session then return end
     local key = kind .. ":" .. id
-    local record = LootTrackerDB.sources[key]
+    local record = session.sources[key]
     if not record then
         record = { kind = kind, id = id, loots = 0, items = {} }
-        LootTrackerDB.sources[key] = record
+        session.sources[key] = record
     end
     if not record.name then
         record.name = ResolveName(kind, id)
@@ -152,14 +234,21 @@ end
 local function CacheNpcName(id, name)
     if not id or not name or name == "" or npcNames[id] then return end
     npcNames[id] = name
-    -- Retroactively name a record created before the name was known.
-    local sources = LootTrackerDB and LootTrackerDB.sources
-    local record = sources and sources["npc:" .. id]
-    if record and not record.name then
-        record.name = name
-        if LT.RefreshUI then
-            LT.RefreshUI()
+    -- Retroactively name a record created before the name was known, in
+    -- every session (not just the active one) — a name learned now could
+    -- just as easily belong to a record from an earlier, closed session.
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    if not sessions then return end
+    local changed = false
+    for _, session in ipairs(sessions) do
+        local record = session.sources["npc:" .. id]
+        if record and not record.name then
+            record.name = name
+            changed = true
         end
+    end
+    if changed and LT.RefreshUI then
+        LT.RefreshUI()
     end
 end
 
@@ -183,8 +272,28 @@ end
 local function CollectSlotSources(slot, fallbackQuantity)
     local sources, quantitySum = {}, 0
     local info = { GetLootSourceInfo(slot) }
+    if DEBUG and #info == 0 then
+        Debug(("slot %d: GetLootSourceInfo returned nothing at all"):format(slot))
+    end
+    -- Disenchant loot windows are sourced from an "Item-..." GUID (or
+    -- sometimes nothing at all) that can't identify the disenchanted item
+    -- (see the DISENCHANT_WINDOW comment) — attribute the whole slot
+    -- directly to the item captured off ITEM_LOCKED instead. Gated on the
+    -- raw source ALSO looking like "Item-..." or being empty (not just the
+    -- time window) so a genuine Creature/GameObject loot window that opens
+    -- while the disenchant timer happens to still be running is never
+    -- misattributed.
+    if IsRecentDisenchant() and lastDisenchantItemID
+        and (info[1] == nil or info[1]:match("^Item%-")) then
+        Debug(("slot %d: recent confirmed Disenchant (itemID=%d), attributing loot directly"):format(
+            slot, lastDisenchantItemID))
+        return { { guid = "Disenchant-" .. lastDisenchantItemID, quantity = fallbackQuantity } }
+    end
     for i = 1, #info, 2 do
-        if ParseGUID(info[i]) then
+        local kind = ParseGUID(info[i])
+        Debug(("slot %d: raw source guid=%s qty=%s parsedKind=%s"):format(
+            slot, tostring(info[i]), tostring(info[i + 1]), tostring(kind)))
+        if kind then
             local quantity = info[i + 1] or 0
             quantitySum = quantitySum + quantity
             sources[#sources + 1] = { guid = info[i], quantity = quantity }
@@ -301,8 +410,8 @@ local function RecordEntry(entry, copperReceived)
     local idealSum, creditedSum = 0, 0
     for _, source in ipairs(entry.sources) do
         local kind, id = ParseGUID(source.guid)
-        if kind then
-            local record = GetSourceRecord(kind, id)
+        local record = kind and GetSourceRecord(kind, id)
+        if record then
             if entry.money then
                 idealSum = idealSum + source.quantity * scale
                 local credit = floor(idealSum + 0.5) - creditedSum
@@ -392,6 +501,19 @@ end
 
 ---@diagnostic disable-next-line: deprecated
 local IsAddOnLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+---@diagnostic disable-next-line: deprecated
+local GetAddOnMetadata = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+
+-- "loaded" (AH values available), "disabled" (installed but unchecked in
+-- the AddOns list — GetAddOnMetadata still finds it on disk even though
+-- it never ran, unlike IsAddOnLoaded), or "missing" (not installed at all).
+function LT.AuctionatorStatus()
+    if IsAddOnLoaded("Auctionator") then return "loaded" end
+    if GetAddOnMetadata and GetAddOnMetadata("Auctionator", "Version") then
+        return "disabled"
+    end
+    return "missing"
+end
 
 -- Reads the current buyout price from Auctionator via its published API
 -- (Auctionator/Source/API/v1/GetAuctionPrice.lua) instead of its internal
@@ -410,23 +532,92 @@ function LT.GetAuctionValue(itemID)
     return nil
 end
 
-function LT.GetSources()
-    return LootTrackerDB and LootTrackerDB.sources
+-- index defaults to the active (currently-tracked) session; pass a
+-- specific index to read a past session's data instead.
+function LT.GetSources(index)
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    local session = sessions and sessions[index or #sessions]
+    return session and session.sources
 end
 
-function LT.GetLog()
-    return LootTrackerDB and LootTrackerDB.log
+function LT.GetLog(index)
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    local session = sessions and sessions[index or #sessions]
+    return session and session.log
 end
 
-function LT.ResetData()
-    if LootTrackerDB then
-        wipe(LootTrackerDB.sources)
-        wipe(LootTrackerDB.log)
+function LT.GetSessions()
+    return LootTrackerDB and LootTrackerDB.sessions
+end
+
+function LT.GetActiveSessionIndex()
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    return sessions and #sessions or 0
+end
+
+-- Closes out the active session (stamping endTime) and starts a fresh
+-- one, WITHOUT deleting the old one — the "manual split" the user asked
+-- for instead of having to Reset (wipe) everything just to compare runs.
+-- Returns the new session's index.
+function LT.StartNewSession(name)
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    if not sessions then return end
+    local current = sessions[#sessions]
+    if current then
+        current.endTime = time()
     end
-    wipe(seenGUIDs)
+    sessions[#sessions + 1] = {
+        name = (name and name ~= "") and name or nil,
+        startTime = time(),
+        sources = {},
+        log = {},
+    }
     if LT.RefreshUI then
         LT.RefreshUI()
     end
+    return #sessions
+end
+
+-- Resetting the active session wipes it in place (tracking continues in
+-- the same slot); resetting a past session deletes it outright — there's
+-- nothing live left to preserve once it's closed. Always leaves at least
+-- one session behind, since GetActiveSession() must never come up empty.
+function LT.ResetSession(index)
+    local sessions = LootTrackerDB and LootTrackerDB.sessions
+    local session = sessions and sessions[index]
+    if not session then return end
+    if index == #sessions then
+        wipe(session.sources)
+        wipe(session.log)
+        session.startTime = time()
+        session.endTime = nil
+        wipe(seenGUIDs)
+    else
+        tremove(sessions, index)
+    end
+    if LT.RefreshUI then
+        LT.RefreshUI()
+    end
+end
+
+function LT.IsItemHidden(itemID)
+    local hidden = LootTrackerDB and LootTrackerDB.filters and LootTrackerDB.filters.hiddenItems
+    return (hidden and itemID and hidden[itemID]) or false
+end
+
+-- hidden stores true/nil rather than true/false so an unhidden entry
+-- doesn't linger in the saved table forever.
+function LT.SetItemHidden(itemID, hidden)
+    local filters = LootTrackerDB and LootTrackerDB.filters
+    if not (filters and itemID) then return end
+    filters.hiddenItems[itemID] = hidden or nil
+    if LT.RefreshUI then
+        LT.RefreshUI()
+    end
+end
+
+function LT.GetHiddenItems()
+    return LootTrackerDB and LootTrackerDB.filters and LootTrackerDB.filters.hiddenItems
 end
 
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -439,7 +630,9 @@ eventFrame:RegisterEvent("CHAT_MSG_MONEY")
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 eventFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+eventFrame:RegisterEvent("ITEM_LOCKED")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
+eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "LOOT_READY" or event == "LOOT_OPENED" then
@@ -471,21 +664,52 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         -- Cheap one-compare bail for the vast majority of combat-log
         -- traffic; mouseover/target caching covers names of living mobs.
-        local _, subevent, _, _, _, _, _, destGUID, destName = CombatLogGetCurrentEventInfo()
+        local _, subevent, _, sourceGUID, _, _, _, destGUID, destName = CombatLogGetCurrentEventInfo()
         if subevent == "UNIT_DIED" then
             ---@diagnostic disable-next-line: need-check-nil
             CacheGUIDName(destGUID, destName)
+        elseif DEBUG and subevent == "SPELL_CAST_SUCCESS" and sourceGUID == UnitGUID("player") then
+            -- Fallback data point in case ITEM_LOCKED doesn't pan out either:
+            -- this fires for the Disenchant cast too, with destGUID/destName
+            -- describing whatever it was cast on.
+            Debug(("SPELL_CAST_SUCCESS by player: destGUID=%s destName=%s"):format(
+                tostring(destGUID), tostring(destName)))
         end
     elseif event == "UPDATE_MOUSEOVER_UNIT" then
         CacheUnitName("mouseover")
     elseif event == "PLAYER_TARGET_CHANGED" then
         CacheUnitName("target")
     elseif event == "UNIT_SPELLCAST_SENT" then
-        local _, target = ...
+        local a1, target, a3, a4 = ...
+        Debug(("UNIT_SPELLCAST_SENT args: %s | %s | %s | %s"):format(
+            tostring(a1), tostring(target), tostring(a3), tostring(a4)))
         -- Gathering only happens out of combat; the guard keeps hostile
         -- cast targets from being mistaken for node names.
         if target and target ~= "" and not UnitAffectingCombat("player") then
             lastObjectName, lastObjectTime = target, GetTime()
+        end
+    elseif event == "ITEM_LOCKED" then
+        -- Confirmed via a live repro: the lock on the disenchanted item
+        -- fires AFTER UNIT_SPELLCAST_SUCCEEDED (the item being locked is
+        -- a side effect of it being consumed, not a target picked before
+        -- casting), so this fills in lastDisenchantItemID retroactively
+        -- for a Disenchant that JUST succeeded, rather than the reverse.
+        local bag, slot = ...
+        local itemID = bag and slot and GetContainerItemID and GetContainerItemID(bag, slot)
+        Debug(("ITEM_LOCKED bag=%s slot=%s itemID=%s"):format(tostring(bag), tostring(slot), tostring(itemID)))
+        if itemID and itemID > 0 and IsRecentDisenchant() then
+            lastDisenchantItemID = itemID
+            Debug(("ITEM_LOCKED matched a recent Disenchant cast — target itemID=%d"):format(itemID))
+        end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        local _, _, spellID = ...
+        local castName = GetSpellInfo(spellID)
+        Debug(("UNIT_SPELLCAST_SUCCEEDED spellID=%s name=%s (disenchant name is %s)"):format(
+            tostring(spellID), tostring(castName), tostring(DISENCHANT_SPELL_NAME)))
+        if DISENCHANT_SPELL_NAME and castName == DISENCHANT_SPELL_NAME then
+            lastDisenchantTime = GetTime()
+            lastDisenchantItemID = nil -- filled in by the ITEM_LOCKED that follows
+            Debug("Disenchant cast recognized, arming disenchant window (item id pending)")
         end
     elseif event == "ADDON_LOADED" then
         if ... == ADDON_NAME then
